@@ -15,9 +15,10 @@ import numpy as np
 import json
 import os
 import io
+import base64
 from PIL import Image
 
-from core.comparator import compare_drawings
+from core.comparator import compare_drawings, crop_region
 
 st.set_page_config(
     page_title="Drawing QA Toolkit",
@@ -106,6 +107,77 @@ def load_drawing(file):
 
 def cv2_to_display(img_bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+
+def img_to_base64(img_bgr: np.ndarray, max_width: int = 600) -> str:
+    """Encode a BGR image as a base64 JPEG string for embedding in HTML."""
+    # Resize if too large
+    h, w = img_bgr.shape[:2]
+    if w > max_width:
+        scale = max_width / w
+        img_bgr = cv2.resize(img_bgr, (max_width, int(h * scale)))
+    rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    pil = Image.fromarray(rgb)
+    buf = io.BytesIO()
+    pil.save(buf, format="JPEG", quality=90)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def render_interactive_flagged_changes(discrepancies, master, aligned_revision):
+    """
+    Render an interactive flagged-changes viewer using Streamlit components.
+    Each discrepancy is shown as a clickable card with zoomed before/after crops.
+    """
+    if not discrepancies:
+        st.success("No discrepancies detected above the current sensitivity threshold.")
+        return
+
+    # Severity & category colors
+    severity_emoji = {"minor": "🟡", "moderate": "🟠", "major": "🔴"}
+    category_emoji = {"geometry": "📐", "dimension": "📏", "text": "📝", "annotation": "🏷️", "unknown": "❓"}
+
+    # Let user pick which discrepancy to inspect
+    options = [
+        f"#{d.id}  {severity_emoji.get(d.severity, '')} {d.severity.upper()}  |  "
+        f"{category_emoji.get(d.category, '')} {d.category}  |  {d.description[:60] if d.description else 'No description'}"
+        for d in discrepancies
+    ]
+
+    st.markdown("**Click on any change below to see a zoomed before/after view of that region:**")
+
+    # Show all discrepancies as expandable cards
+    for i, d in enumerate(discrepancies):
+        sev_color = {"minor": "#fbbf24", "moderate": "#f97316", "major": "#ef4444"}.get(d.severity, "#9ca3af")
+        cat_color = {
+            "geometry": "#ef4444", "dimension": "#f97316",
+            "text": "#eab308", "annotation": "#06b6d4", "unknown": "#9ca3af"
+        }.get(d.category, "#9ca3af")
+
+        header = (
+            f"{severity_emoji.get(d.severity, '')} **Change #{d.id}** — "
+            f"**{d.severity.upper()}** {d.category} change"
+        )
+        if d.description:
+            header += f"  \n`{d.description}`"
+
+        with st.expander(header, expanded=(i == 0)):
+            # Crop the region from both master and aligned revision
+            master_crop = crop_region(master, d.bbox, context_factor=2.5, min_size=200)
+            revision_crop = crop_region(aligned_revision, d.bbox, context_factor=2.5, min_size=200)
+
+            col_before, col_after = st.columns(2)
+            with col_before:
+                st.markdown(f"**BEFORE (Master)**")
+                st.image(cv2_to_display(master_crop), use_container_width=True)
+            with col_after:
+                st.markdown(f"**AFTER (Revision)**")
+                st.image(cv2_to_display(revision_crop), use_container_width=True)
+
+            # Info row
+            info_cols = st.columns(3)
+            info_cols[0].markdown(f"**Category:** `{d.category}`")
+            info_cols[1].markdown(f"**Severity:** `{d.severity}`")
+            info_cols[2].markdown(f"**Area:** `{d.area_px} px²`")
 
 
 def export_to_excel(report_data: dict, filename: str = "report.xlsx") -> bytes:
@@ -520,18 +592,10 @@ if mode.startswith("1"):
 
             st.json(report)
 
-        st.subheader("Flagged Changes")
-        if result.discrepancies:
-            st.table([{
-                "ID": d.id,
-                "Category": d.category,
-                "Severity": d.severity,
-                "Area (px²)": d.area_px,
-                "Location (x,y,w,h)": d.bbox,
-                "Description": d.description,
-            } for d in result.discrepancies])
-        else:
-            st.success("No discrepancies detected above the current sensitivity threshold.")
+        st.subheader("Flagged Changes — Interactive Viewer")
+        render_interactive_flagged_changes(
+            result.discrepancies, master, result.aligned_revision
+        )
     else:
         st.info("Set your options in the sidebar and click **Run Comparison** to get started.")
 

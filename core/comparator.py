@@ -313,7 +313,13 @@ def _looks_like_dimension(text: str) -> bool:
 
 
 def annotate(revision_color: np.ndarray, discrepancies: List[Discrepancy]) -> np.ndarray:
-    """Draws color-coded bounding boxes + labels on the revision image."""
+    """
+    Draws highly visible annotations on the revision image:
+    - Thick colored bounding boxes around each changed region
+    - Semi-transparent color overlay inside each box
+    - Large filled circle badge with white ID number
+    Every flagged region is designed to be immediately visible even on dense drawings.
+    """
     # Color by category (BGR)
     category_colors = {
         "geometry": (0, 0, 255),       # red
@@ -322,23 +328,107 @@ def annotate(revision_color: np.ndarray, discrepancies: List[Discrepancy]) -> np
         "annotation": (255, 200, 0),   # cyan
         "unknown": (180, 180, 180),    # gray
     }
-    severity_thickness = {"minor": 1, "moderate": 2, "major": 3}
 
     out = revision_color.copy()
+    overlay = out.copy()
+
     for d in discrepancies:
         x, y, w, h = d.bbox
         color = category_colors.get(d.category, (180, 180, 180))
-        thickness = severity_thickness.get(d.severity, 2)
+        pad = 6
 
-        cv2.rectangle(out, (x - 4, y - 4), (x + w + 4, y + h + 4), color, thickness)
+        # 1. Semi-transparent color fill inside the bounding box
+        x0, y0 = max(0, x - pad), max(0, y - pad)
+        x1, y1 = min(out.shape[1], x + w + pad), min(out.shape[0], y + h + pad)
+        cv2.rectangle(overlay, (x0, y0), (x1, y1), color, -1)
 
-        # Label with ID, category, and severity
-        label = f"#{d.id} {d.category}"
-        cv2.putText(out, label, (x - 4, max(y - 10, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+        # 2. Thick bounding box outline
+        cv2.rectangle(out, (x0, y0), (x1, y1), color, 3)
+
+        # 3. Large filled circle badge with ID number (top-left corner)
+        badge_radius = 18
+        badge_cx = max(badge_radius + 2, x0)
+        badge_cy = max(badge_radius + 2, y0 - badge_radius - 6)
+        # Ensure badge stays within image bounds
+        badge_cy = max(badge_radius + 2, badge_cy)
+        badge_cx = min(out.shape[1] - badge_radius - 2, badge_cx)
+
+        # Black outline circle + colored fill
+        cv2.circle(out, (badge_cx, badge_cy), badge_radius + 2, (0, 0, 0), -1)
+        cv2.circle(out, (badge_cx, badge_cy), badge_radius, color, -1)
+        cv2.circle(overlay, (badge_cx, badge_cy), badge_radius + 2, (0, 0, 0), -1)
+        cv2.circle(overlay, (badge_cx, badge_cy), badge_radius, color, -1)
+
+        # White ID number centered in the badge
+        label = str(d.id)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.7 if len(label) <= 2 else 0.55
+        thickness = 2
+        (tw, th), _ = cv2.getTextSize(label, font, font_scale, thickness)
+        text_x = badge_cx - tw // 2
+        text_y = badge_cy + th // 2
+        cv2.putText(out, label, (text_x, text_y), font, font_scale, (255, 255, 255), thickness)
+        cv2.putText(overlay, label, (text_x, text_y), font, font_scale, (255, 255, 255), thickness)
+
+    # Blend the overlay (semi-transparent fill) with the original
+    alpha = 0.15
+    out = cv2.addWeighted(overlay, alpha, out, 1 - alpha, 0)
+
+    # Re-draw the bounding box outlines and badges at full opacity on top
+    for d in discrepancies:
+        x, y, w, h = d.bbox
+        color = category_colors.get(d.category, (180, 180, 180))
+        pad = 6
+        x0, y0 = max(0, x - pad), max(0, y - pad)
+        x1, y1 = min(out.shape[1], x + w + pad), min(out.shape[0], y + h + pad)
+
+        cv2.rectangle(out, (x0, y0), (x1, y1), color, 3)
+
+        badge_radius = 18
+        badge_cx = max(badge_radius + 2, x0)
+        badge_cy = max(badge_radius + 2, y0 - badge_radius - 6)
+        badge_cy = max(badge_radius + 2, badge_cy)
+        badge_cx = min(out.shape[1] - badge_radius - 2, badge_cx)
+
+        cv2.circle(out, (badge_cx, badge_cy), badge_radius + 2, (0, 0, 0), -1)
+        cv2.circle(out, (badge_cx, badge_cy), badge_radius, color, -1)
+
+        label = str(d.id)
+        font_scale = 0.7 if len(label) <= 2 else 0.55
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)
+        cv2.putText(out, label,
+                    (badge_cx - tw // 2, badge_cy + th // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), 2)
 
     return out
 
+
+def crop_region(img: np.ndarray, bbox: Tuple[int, int, int, int],
+                context_factor: float = 2.0,
+                min_size: int = 150) -> np.ndarray:
+    """
+    Crop a region from the image with contextual padding so you can see
+    what's around the change. Used by the interactive viewer.
+
+    Args:
+        img: Source image (BGR).
+        bbox: (x, y, w, h) bounding box of the region.
+        context_factor: How much extra context to include (2.0 = 2x the region size).
+        min_size: Minimum crop width/height in pixels.
+    """
+    h_img, w_img = img.shape[:2]
+    x, y, w, h = bbox
+
+    # Add context padding
+    pad_w = max(int(w * context_factor / 2), min_size // 2)
+    pad_h = max(int(h * context_factor / 2), min_size // 2)
+
+    x0 = max(0, x - pad_w)
+    y0 = max(0, y - pad_h)
+    x1 = min(w_img, x + w + pad_w)
+    y1 = min(h_img, y + h + pad_h)
+
+    return img[y0:y1, x0:x1]
 
 def make_side_by_side(master_color, annotated_revision) -> np.ndarray:
     h = max(master_color.shape[0], annotated_revision.shape[0])
