@@ -1,0 +1,96 @@
+# Domain Terms — Known-Correct Vocabulary
+# ==========================================
+# Words/abbreviations here will NOT be flagged as typos.
+# Add terms specific to your drawing standards.
+# Case-insensitive matching is used.
+
+# --- Company & Project ---
+company_terms:
+  - "CET"
+  - "ALV"
+  - "Autoliv"
+  - "OEM"
+  - "ECO"
+  - "ECN"
+  - "BOM"
+
+# --- Materials & Fabrics ---
+material_terms:
+  - "Nylon"
+  - "Polyester"
+  - "Polyamide"
+  - "420D"
+  - "470D"
+  - "630D"
+  - "840D"
+  - "PU coated"
+  - "silicone"
+  - "OPW"
+  - "Pantone"
+  - "DTEX"
+  - "TPU"
+
+# --- Sewing & Construction ---
+sewing_terms:
+  - "lock-stitch"
+  - "chain-stitch"
+  - "overlock"
+  - "bartack"
+  - "backstitch"
+  - "seam"
+  - "selvage"
+  - "selvedge"
+  - "warp"
+  - "weft"
+  - "bias"
+  - "grainline"
+
+# --- Engineering & Drawing ---
+engineering_terms:
+  - "GD&T"
+  - "datum"
+  - "chamfer"
+  - "fillet"
+  - "kerf"
+  - "debur"
+  - "deburr"
+  - "countersink"
+  - "counterbore"
+  - "thru"
+  - "TYP"
+  - "REF"
+  - "NTS"
+  - "CL"
+  - "BHN"
+  - "Ra"
+  - "Rz"
+  - "MAX"
+  - "MIN"
+  - "NOM"
+
+# --- Units & Symbols ---
+units:
+  - "mm"
+  - "cm"
+  - "gsm"
+  - "kPa"
+  - "MPa"
+  - "psi"
+  - "deg"
+  - "daN"
+
+# --- Airbag Specific ---
+airbag_terms:
+  - "inflator"
+  - "tether"
+  - "vent"
+  - "cushion"
+  - "diffuser"
+  - "retainer"
+  - "initiator"
+  - "squib"
+  - "DAB"
+  - "PAB"
+  - "SAB"
+  - "CAB"
+  - "KAB"

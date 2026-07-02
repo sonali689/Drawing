@@ -1,0 +1,42 @@
+# Autoliv / CET Drawing Completeness Checklist
+# ==============================================
+# Edit this file to add, remove, or reorder items.
+# Each item is checked against the drawing during the Prototype Completeness Check.
+# Items are grouped by category for readability, but all are checked as a flat list.
+
+prototype_checklist:
+  # --- Material & Fabric ---
+  - "Base fabric type / material specification"
+  - "Fabric weight or thickness (g/m² or mm)"
+  - "Coating specification (e.g., silicone, PU coated, uncoated)"
+  - "Thread type and specification"
+
+  # --- Sewing & Construction ---
+  - "Sewing method / stitch type (e.g., lock-stitch, chain-stitch, overlock)"
+  - "Seam allowance dimensions"
+  - "Stitch density / stitches per cm or inch"
+  - "Reinforcement areas and method"
+
+  # --- Panel & Layout ---
+  - "Panel positioning method / orientation marks"
+  - "Panel identification (numbering / labeling)"
+  - "Grain direction or warp direction indicator"
+  - "Fold pattern / packing instructions"
+
+  # --- Functional Features ---
+  - "Tether routing and attachment method"
+  - "Inflator pocket specification"
+  - "Vent hole size, shape, and placement"
+  - "Gas flow path or inflation sequence"
+
+  # --- Title Block & Metadata ---
+  - "Part number in title block"
+  - "Revision number and date"
+  - "Drawing scale and units"
+  - "Customer name and project reference"
+  - "Drawn by / checked by / approved by fields"
+
+  # --- Tolerances & Quality ---
+  - "General tolerances specification"
+  - "Critical dimensions identified"
+  - "Inspection / test requirements noted"

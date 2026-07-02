@@ -1,138 +1,224 @@
-# Drawing QA Toolkit — Demo
+# Drawing QA Toolkit v2
 
-Three prototype checks, built as one app with a mode switcher in the
-sidebar. All three ship with synthetic sample drawings so you can demo
-before you have real Autoliv/CET data.
+AI-powered drawing review tool for **Autoliv / CET Thailand** — three
+production-ready checks for the engineering drawing review workflow.
 
-## Run it
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Pick a mode in the sidebar:
+## What It Does
 
 ### 1. CET Revision Comparison
-Deterministic pixel-diff (OpenCV) finds every changed region between a
-master drawing and a revision, then an optional AI layer reconciles those
-regions against a list of changes you actually requested — sorting them
-into **applied**, **unintended** (changed but not requested), and
-**missing** (requested but not found). This is the answer to *"verify
-requested modifications were applied and no unnecessary changes were made."*
+Compares a master drawing with a revision to verify that:
+- All **requested changes** were correctly applied
+- No **unintended/unauthorized changes** were made
+- **Text and dimension** values changed as expected (OCR-based)
+
+**How it works:**
+- SIFT feature matching + RANSAC homography for automatic alignment
+- SSIM structural similarity + pixel diff for discrepancy detection
+- OCR extracts text → structured text-level diff catches subtle value changes
+- Optional AI layer reconciles diffs against your change-request list
 
 ### 2. Prototype Completeness Check
-For prototype requests: reads a single drawing (all views + notes) and
-checks it against an editable checklist — default items are base fabric
-type, sewing method, and panel positioning method. Flags each item as
-**present** (with the evidence text found), **missing**, or **ambiguous**.
-The sample drawing is missing a panel-positioning instruction on purpose.
+For prototype requests, confirms that the drawing contains all required
+manufacturing instructions:
+- Base fabric type, sewing method, panel positioning
+- Tether routing, inflator pocket, vent holes
+- All items from a customizable YAML checklist
 
 ### 3. Typo & Cross-View Consistency Check
-Reads all text on a drawing sheet and:
-- flags genuine spelling mistakes (skips an editable domain-terms allow-list
-  so real jargon/material names aren't misflagged)
-- flags cases where the same panel/feature/dimension is described
-  differently between the main view and a section/detail view
+- **Typos**: Finds spelling mistakes using local OCR + spellcheck (domain-aware)
+- **Mismatches**: Detects inconsistencies between views/sections (e.g., a
+  dimension given as 120mm in the main view but 125mm in the section view)
 
-The sample sheet has a planted typo ("seem allowance") and a planted
-mismatch (panel width 120mm in the main view vs 125mm in the section view).
+---
 
-## How it maps to your original pipeline diagram (Mode 1 CV layer)
+## Installation (Windows — Full Local Setup)
 
-| Slide stage | File | What it does |
-|---|---|---|
-| Master Drawing / New Revision | `app.py` (upload or sample) | Loads the two images |
-| Pre-processing (grayscale + normalization) | `core/comparator.py: preprocess()` | Grayscale, contrast normalization, denoise blur |
-| Image Alignment (OpenCV feature matching) | `align_images()` | ORB keypoints + BFMatcher + RANSAC homography — corrects scan skew/offset/rotation |
-| Pixel Subtraction (NumPy matrix diff) | `compute_discrepancy_map()` | `cv2.absdiff` between aligned grayscale images |
-| Threshold Filter (noise removal) | same function | Binary threshold + morphological open/close/dilate |
-| Discrepancy Map (highlighted regions) | `extract_discrepancies()` + `annotate()` | Contour detection → bounding boxes, severity-graded, color-coded overlay |
-| Report Output (flagged changes exported) | `ComparisonResult.to_report_dict()` | Structured JSON, downloadable from the UI |
+### Step 1: Python 3.10+
+You likely already have Python. Verify:
+```powershell
+python --version
+```
+If not installed, get it from https://www.python.org/downloads/
 
-Modes 2 and 3 are a different kind of problem — single-drawing information
-extraction and cross-reference reasoning rather than pixel diffing — so they
-skip the CV pipeline entirely and go straight to a vision-LLM call per
-drawing. See `core/completeness_checker.py` and `core/consistency_checker.py`.
+### Step 2: Tesseract OCR (System Install)
+Tesseract is the primary OCR engine. It needs a separate system install:
 
-## Project structure
+**Option A — winget (recommended):**
+```powershell
+winget install UB-Mannheim.TesseractOCR
+```
+
+**Option B — Manual installer:**
+1. Download from https://github.com/UB-Mannheim/tesseract/wiki
+2. Run the installer
+3. Install to the default path: `C:\Program Files\Tesseract-OCR`
+4. **Add to PATH**: The installer usually does this, but verify by running:
+   ```powershell
+   tesseract --version
+   ```
+   If not found, add `C:\Program Files\Tesseract-OCR` to your system PATH.
+
+### Step 3: Python Dependencies
+```powershell
+cd "path\to\Drawing"
+pip install -r requirements.txt
+```
+
+This installs:
+| Package | Purpose |
+|---|---|
+| `streamlit` | Web UI framework |
+| `opencv-python-headless` | Image processing, alignment, feature matching |
+| `numpy` | Array operations |
+| `pillow` | Image loading |
+| `PyMuPDF` | PDF → image conversion |
+| `pytesseract` | Tesseract OCR Python wrapper |
+| `easyocr` | Deep learning OCR (handles rotated text better) |
+| `pyspellchecker` | Local typo detection |
+| `pyyaml` | YAML config loading |
+| `scikit-image` | SSIM structural comparison |
+| `openpyxl` | Excel report export |
+| `anthropic` | Anthropic API client (optional, for cloud AI) |
+| `ollama` | Ollama client (optional, for local AI) |
+
+> **Note:** EasyOCR will download its model files (~100MB) on first run.
+> This is a one-time download and works offline after that.
+
+### Step 4: Local AI (Optional — for fully local operation)
+If you want AI features to run 100% locally (no cloud API):
+
+1. **Install Ollama**: Download from https://ollama.com/download/windows
+2. **Pull a vision model**:
+   ```powershell
+   # Recommended: LLaVA 7B (~4.7GB download, needs ~8GB RAM)
+   ollama pull llava:7b
+   
+   # Better quality but needs more RAM (~16GB):
+   ollama pull llava:13b
+   ```
+3. Ollama runs as a background service — it starts automatically after install.
+
+> **RAM Requirements:**
+> - LLaVA 7B: ~8GB RAM
+> - LLaVA 13B: ~16GB RAM
+> - Text-only models (llama3, mistral): ~4-6GB RAM
+
+### Step 5: Run
+```powershell
+streamlit run app.py
+```
+Opens in your browser at http://localhost:8501
+
+---
+
+## Project Structure
 
 ```
-drawing_comparator/
-├── app.py                            # Streamlit UI (3 modes)
+Drawing/
+├── app.py                              # Streamlit UI (3 modes)
 ├── core/
-│   ├── comparator.py                  # Mode 1: deterministic CV diff pipeline
-│   ├── change_verifier.py             # Mode 1: AI reconciliation vs requested changes
-│   ├── completeness_checker.py        # Mode 2: instruction checklist verification
-│   └── consistency_checker.py         # Mode 3: typo + cross-view mismatch detection
+│   ├── comparator.py                    # Mode 1: Enhanced CV diff (SIFT + SSIM)
+│   ├── change_verifier.py               # Mode 1: AI reconciliation vs requested changes
+│   ├── completeness_checker.py          # Mode 2: instruction checklist verification
+│   ├── consistency_checker.py           # Mode 3: typo + cross-view mismatch detection
+│   ├── pdf_handler.py                   # PDF → high-res images (PyMuPDF)
+│   ├── ocr_engine.py                    # Local OCR (Tesseract + EasyOCR hybrid)
+│   ├── text_analyzer.py                 # Local typo detection + dimension parsing
+│   ├── structured_diff.py               # Text/dimension-level diff between drawings
+│   └── local_llm.py                     # Ollama integration for local AI
+├── config/
+│   ├── autoliv_checklist.yaml           # Customizable prototype checklist
+│   └── domain_terms.yaml                # Domain terms (won't be flagged as typos)
 ├── samples/
-│   ├── generate_sample_drawings.py    # Master/revision pair for Mode 1
-│   └── generate_prototype_sample.py   # Multi-view sheet for Modes 2 & 3
+│   ├── master_drawing.png               # Sample master for Mode 1
+│   ├── revised_drawing.png              # Sample revision for Mode 1
+│   ├── prototype_drawing_sample.png     # Sample for Modes 2 & 3
+│   ├── generate_sample_drawings.py
+│   └── generate_prototype_sample.py
 ├── requirements.txt
 └── README.md
 ```
 
-## What all three AI-based checks have in common
+---
 
-Each is one Claude vision API call per drawing/region, asking for a strict
-JSON response, which the code parses into a typed result. I tested the
-plumbing (image crop/encode → prompt → JSON parse → aggregation) against
-mocked API responses, since I don't have your API key — the code paths work,
-but prompt *quality* against real drawing content needs validation once you
-run it against actual CET drawings. Expect to tune the prompts in each
-`core/*.py` file after seeing real output; drawing conventions and
-terminology are specific to your standard and the model won't know them
-without examples.
+## Architecture — What Runs Where
 
-Cost/privacy note: each check is a small number of API calls with image
-inputs — cheap per drawing. If Autoliv drawings are sensitive, look into
-Anthropic's Zero Data Retention agreements before sending real production
-drawings through any API-based tool.
+| Feature | Runs Locally? | Needs Cloud API? | Notes |
+|---|:---:|:---:|---|
+| PDF → Image conversion | ✅ | ❌ | PyMuPDF, no external calls |
+| Image alignment (SIFT/RANSAC) | ✅ | ❌ | OpenCV, purely local |
+| Pixel diff + SSIM | ✅ | ❌ | OpenCV + scikit-image |
+| OCR text extraction | ✅ | ❌ | Tesseract + EasyOCR |
+| Text-level diff | ✅ | ❌ | Pure Python string matching |
+| Typo detection (basic) | ✅ | ❌ | pyspellchecker + domain dict |
+| Dimension value comparison | ✅ | ❌ | Regex parsing + comparison |
+| Change-request reconciliation | ✅ (Ollama) | ✅ (Anthropic) | Needs a vision LLM |
+| Completeness assessment | ✅ (Ollama) | ✅ (Anthropic) | Needs a vision LLM |
+| Cross-view mismatch reasoning | ✅ (Ollama) | ✅ (Anthropic) | Needs a vision LLM |
+| Excel report export | ✅ | ❌ | openpyxl |
 
-## Change-Request Verification (AI) — Mode 1 detail
+**Bottom line:** The CV pipeline, OCR, text diff, and typo detection are 100% local
+with no external dependencies. Only the "reasoning about what the change means" step
+optionally uses an LLM (local via Ollama or cloud via Anthropic).
 
-1. Type or paste your requested changes into the sidebar (one per line) —
-   this is whatever you'd normally put in the ECO note or email to CET.
-2. Enter your Anthropic API key (get one at console.anthropic.com — this
-   demo calls the API directly, it does not go through claude.ai).
-3. Run the comparison. For every region the CV pipeline flags as changed,
-   it crops a before/after pair and asks Claude's vision model whether that
-   specific region matches one of your requested changes.
-4. You get three buckets:
-   - **Applied as requested** — matched, confirmed done
-   - **Unintended changes** — real geometric changes CET made that nobody
-     asked for
-   - **Requested but missing** — things you asked for that don't show up in
-     any detected region
+---
 
-## What existing commercial tools do (researched for feature parity)
+## Configuration
 
-Tools like Bluebeam Studio compare, DraftSight Draw Compare, Trimble's
-drawing overlay, and CoLab's revision comparison all converge on the same
-core UX, which this demo replicates:
+### Editing the Prototype Checklist
+Edit `config/autoliv_checklist.yaml` — items are grouped by category:
+```yaml
+prototype_checklist:
+  - "Base fabric type / material specification"
+  - "Sewing method / stitch type"
+  # ... add your items here
+```
 
-- **Auto-alignment first** — never compare raw pixels without correcting
-  scan offset/rotation, or you get false positives everywhere.
-- **Color-coded severity**, not just a flat diff mask.
-- **A clickable list of discrepancies**, not just an image — engineers
-  triage a list, they don't hunt across a picture.
-- **Exportable report** for the ECO/QA record.
+### Editing Domain Terms
+Edit `config/domain_terms.yaml` — terms here won't be flagged as typos:
+```yaml
+material_terms:
+  - "Nylon 420D"
+  - "PU coated"
+sewing_terms:
+  - "lock-stitch"
+  - "bartack"
+```
 
-Two things production tools add that this demo does **not** yet include,
-worth mentioning if this goes further:
-- **Vector-native comparison** (reading DWG/DXF entities directly) for CAD
-  exports — pixel diffing only works reliably on rasterized/scanned input.
-- **OCR-based text/dimension comparison** — catches cases where a dimension
-  value changes but the geometry pixel-shift is too small to threshold
-  cleanly (e.g., "25.4" → "25.5"). Worth adding via `pytesseract` once you
-  have a target format.
+### Switching AI Backend
+In the sidebar, under "AI Backend":
+- **Ollama (Local)** — select your installed vision model
+- **Anthropic (Cloud)** — enter your API key
 
-## Swapping in real Autoliv drawings later
+You can also set the API key as an environment variable:
+```powershell
+$env:ANTHROPIC_API_KEY = "your-key-here"
+```
 
-1. Uncheck "Use sample drawings" in the sidebar and upload two images
-   directly — no code changes needed for PNG/JPG scans or exports.
-2. If your drawings are PDFs, convert pages to images first
-   (`pdf2image` or `PyMuPDF`) — I can wire that in when you're ready.
-3. Tune `threshold` and `min_area` in the sidebar per drawing type — dense
-   drawings with lots of hatching/text need a higher `min_area` to avoid
-   noise; clean CAD exports can go lower.
+---
+
+## Using Real Autoliv Drawings
+
+1. Uncheck "Use sample drawings" in the sidebar
+2. Upload your drawings (PDF, PNG, JPG, or TIFF)
+3. For PDFs with multiple pages, select which page to compare
+4. Tune `threshold` and `min_area` per drawing type:
+   - Dense drawings with hatching/text: higher `min_area` (500+)
+   - Clean CAD exports: lower values work well
+5. Enable "OCR text diff" for text-level comparison
+6. Edit the checklist and domain terms to match your specific drawing standards
+
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| `tesseract not found` | Install Tesseract and add to PATH (see Step 2) |
+| `easyocr` first run is slow | Normal — it downloads models (~100MB). One-time only. |
+| SIFT not working | Your OpenCV may not include SIFT. Update: `pip install opencv-python-headless>=4.9` |
+| Ollama connection refused | Make sure Ollama is running: `ollama serve` |
+| PDF upload doesn't work | Install PyMuPDF: `pip install PyMuPDF` |
+| Low alignment confidence | Drawings may be too different or heavily rotated. Try unchecking SIFT and using ORB. |
+| Too many false positives | Increase `threshold` and `min_area` in the sidebar |
+| Excel export missing | Install openpyxl: `pip install openpyxl` |
