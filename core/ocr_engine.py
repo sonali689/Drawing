@@ -12,6 +12,8 @@ its model on first run (~100MB, one-time) and then works offline.
 The merger logic takes the union of detections, deduplicates overlapping boxes,
 and keeps the highest-confidence result for each text region.
 """
+import os
+import platform
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -24,6 +26,48 @@ import numpy as np
 _tesseract_available = None
 _easyocr_available = None
 _easyocr_reader = None
+_tesseract_path_configured = False
+
+
+def _configure_tesseract_path() -> None:
+    """
+    Point pytesseract at the Tesseract binary explicitly on Windows.
+
+    winget/the UB-Mannheim installer updates the *system* PATH, but an
+    already-open terminal (and any venv started from it) won't pick that up
+    until a fresh shell is opened. Rather than rely on PATH at all, check
+    the standard install locations directly — this makes OCR work
+    regardless of when/how the terminal was opened.
+    """
+    global _tesseract_path_configured
+    if _tesseract_path_configured:
+        return
+    _tesseract_path_configured = True
+
+    if platform.system() != "Windows":
+        return
+
+    try:
+        import pytesseract
+    except ImportError:
+        return
+
+    # If it's already resolvable (e.g. properly on PATH), leave it alone.
+    try:
+        pytesseract.get_tesseract_version()
+        return
+    except Exception:
+        pass
+
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            return
 
 
 def _check_tesseract() -> bool:
@@ -31,6 +75,7 @@ def _check_tesseract() -> bool:
     if _tesseract_available is None:
         try:
             import pytesseract
+            _configure_tesseract_path()
             # Quick sanity check — will throw if tesseract binary isn't found
             pytesseract.get_tesseract_version()
             _tesseract_available = True
@@ -167,6 +212,7 @@ def _run_tesseract(img: np.ndarray,
     where text appears in clusters: notes, title blocks, dimension callouts).
     """
     import pytesseract
+    _configure_tesseract_path()
 
     preprocessed = preprocess_for_ocr(img)
 
@@ -305,11 +351,12 @@ def _merge_blocks(blocks: List[TextBlock],
                 is_duplicate = True
                 break
         if not is_duplicate:
+            came_from_mixed_sources = bool(kept) and block.source != kept[0].source
             kept.append(TextBlock(
                 text=block.text,
                 bbox=block.bbox,
                 confidence=block.confidence,
-                source="merged" if block.source != kept[0].source if kept else block.source else block.source,
+                source="merged" if came_from_mixed_sources else block.source,
                 angle=block.angle,
             ))
 
@@ -349,7 +396,7 @@ def extract_text(img: np.ndarray,
             tess_blocks = _run_tesseract_multiconfig(img)
             all_blocks.extend(tess_blocks)
             engines_used.append("tesseract")
-        except Exception as e:
+        except Exception:
             pass  # silently skip if tesseract fails
 
     if use_easyocr and _check_easyocr():
@@ -357,7 +404,7 @@ def extract_text(img: np.ndarray,
             easy_blocks = _run_easyocr(img, languages)
             all_blocks.extend(easy_blocks)
             engines_used.append("easyocr")
-        except Exception as e:
+        except Exception:
             pass  # silently skip if easyocr fails
 
     if not all_blocks:
