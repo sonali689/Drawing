@@ -28,55 +28,54 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Custom CSS for a polished look
+# Custom CSS — restrained, high-contrast, works with Streamlit's own theme
+# (colors/background are set in .streamlit/config.toml, not overridden here,
+# so built-in components like st.warning/st.error keep readable text)
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
-    .stApp {
-        background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
-    }
     .main .block-container {
-        padding-top: 1.5rem;
+        padding-top: 2rem;
+        max-width: 1200px;
     }
     h1 {
-        background: linear-gradient(90deg, #00d4ff, #7b2ff7);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 800;
+        font-weight: 700;
+        letter-spacing: -0.02em;
     }
-    .stMetric {
-        background: rgba(255,255,255,0.05);
-        border-radius: 10px;
-        padding: 10px;
-        border: 1px solid rgba(255,255,255,0.1);
+    div[data-testid="stMetric"] {
+        background: #F8F9FB;
+        border: 1px solid #E5E7EB;
+        border-radius: 8px;
+        padding: 14px 16px;
     }
     div[data-testid="stMetricValue"] {
-        font-size: 1.8rem;
-        font-weight: 700;
+        font-size: 1.5rem;
+        font-weight: 600;
     }
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
+        gap: 4px;
+        border-bottom: 1px solid #E5E7EB;
     }
     .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0;
-        padding: 8px 20px;
+        border-radius: 6px 6px 0 0;
+        padding: 8px 18px;
     }
-    .css-1v0mbdj {
-        border-radius: 12px;
+    section[data-testid="stSidebar"] {
+        border-right: 1px solid #E5E7EB;
     }
-    div[data-testid="stSidebar"] {
-        background: rgba(15, 15, 26, 0.95);
+    section[data-testid="stSidebar"] .stButton button {
+        font-weight: 600;
     }
     .status-badge {
         display: inline-block;
         padding: 2px 10px;
-        border-radius: 12px;
+        border-radius: 4px;
         font-size: 0.85em;
         font-weight: 600;
     }
-    .status-present { background: #1a4d2e; color: #4ade80; }
-    .status-missing { background: #4d1a1a; color: #f87171; }
-    .status-ambiguous { background: #4d3b1a; color: #fbbf24; }
+    .status-present  { background: #DCFCE7; color: #15803D; }
+    .status-missing  { background: #FEE2E2; color: #B91C1C; }
+    .status-ambiguous{ background: #FEF3C7; color: #A16207; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -395,7 +394,7 @@ def export_to_excel(report_data: dict, filename: str = "report.xlsx") -> bytes:
 def ai_backend_selector():
     """Render AI backend selection in sidebar. Returns (backend, api_key, vision_model)."""
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🤖 AI Backend")
+    st.sidebar.subheader("AI Backend")
 
     # Check Ollama availability
     ollama_ok = False
@@ -459,20 +458,24 @@ def show_ocr_status():
 # Title
 # ---------------------------------------------------------------------------
 
-st.title("📐 Drawing QA Toolkit")
-st.caption("AI-powered drawing review for CET / Autoliv Thailand — revision comparison, "
-           "completeness checking, and consistency verification")
+st.title("Drawing QA Toolkit")
+st.caption("Drawing review for CET / Autoliv Thailand — revision comparison, "
+           "completeness checking, and consistency verification.")
+st.divider()
 
-show_ocr_status()
-
-mode = st.sidebar.radio(
-    "📋 Check Mode",
-    [
-        "1. CET Revision Comparison",
-        "2. Prototype Completeness Check",
-        "3. Typo & Cross-View Consistency Check",
-    ],
-)
+with st.sidebar:
+    st.markdown("#### Check Mode")
+    mode = st.radio(
+        "Check Mode",
+        [
+            "1. CET Revision Comparison",
+            "2. Prototype Completeness Check",
+            "3. Typo & Cross-View Consistency Check",
+        ],
+        label_visibility="collapsed",
+    )
+    show_ocr_status()
+    st.divider()
 
 # =============================================================================
 # MODE 1 — CET Revision Comparison
@@ -483,7 +486,7 @@ if mode.startswith("1"):
                "Supports PDF, PNG, JPG, TIFF.")
 
     with st.sidebar:
-        st.subheader("📁 Inputs")
+        st.subheader("Inputs")
         use_sample = st.checkbox("Use sample drawings (no upload needed)", value=True)
         if not use_sample:
             master_file = st.file_uploader("Master Drawing",
@@ -525,7 +528,7 @@ if mode.startswith("1"):
             master_file, revision_file = None, None
             master_page, revision_page = 1, 1
 
-        st.subheader("⚙️ Sensitivity")
+        st.subheader("Sensitivity")
         threshold = st.slider("Pixel difference threshold", 5, 100, 30)
         min_area = st.slider("Minimum region size (px²)", 50, 2000, 250)
         use_sift = st.checkbox("Use SIFT alignment (more robust)", value=True)
@@ -533,7 +536,7 @@ if mode.startswith("1"):
         use_ocr_diff = st.checkbox("Enable OCR text diff", value=True,
                                     help="Extract text with OCR and show text-level changes")
 
-        st.subheader("🔍 Change Request Verification (AI)")
+        st.subheader("Change Request Verification (AI)")
         ai_enabled = st.checkbox("Reconcile diffs against requested changes", value=False)
         if ai_enabled:
             backend, api_key, vision_model = ai_backend_selector()
@@ -549,7 +552,7 @@ if mode.startswith("1"):
             backend, api_key, vision_model = "anthropic", None, None
             requested_changes_text = ""
 
-        run_btn = st.button("🚀 Run Comparison", type="primary", use_container_width=True)
+        run_btn = st.button("Run Comparison", type="primary", use_container_width=True)
 
     if run_btn:
         # Load images
@@ -687,14 +690,14 @@ if mode.startswith("1"):
 
         # --- Display Results ---
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Alignment", "✅ OK" if result.aligned_ok else "⚠️ FAILED")
+        c1.metric("Alignment", "OK" if result.aligned_ok else "Failed")
         c2.metric("Match confidence", f"{result.match_confidence:.0%}")
         c3.metric("SSIM Score", f"{result.ssim_score:.3f}")
         c4.metric("Discrepancies", len(result.discrepancies))
         c5.metric("Processing time", f"{result.processing_time_s:.2f}s")
 
         if not result.aligned_ok:
-            st.warning("⚠️ Automatic alignment had low confidence — results may include false positives from "
+            st.warning("Automatic alignment had low confidence — results may include false positives from "
                        "scan skew/offset rather than real design changes.")
 
         # Build tabs
@@ -713,9 +716,9 @@ if mode.startswith("1"):
             with tab_map["Change Verification"]:
                 r = reconciliation.to_dict()
                 cc1, cc2, cc3 = st.columns(3)
-                cc1.metric("✅ Applied as requested", len(r["applied"]))
-                cc2.metric("🚨 Unintended changes", len(r["unintended"]))
-                cc3.metric("❓ Requested but missing", len(r["missing"]))
+                cc1.metric("Applied as requested", len(r["applied"]))
+                cc2.metric("Unintended changes", len(r["unintended"]))
+                cc3.metric("Requested but missing", len(r["missing"]))
                 if r["applied"]:
                     st.success("**Applied as requested**")
                     st.table(r["applied"])
@@ -727,7 +730,7 @@ if mode.startswith("1"):
                     for m in r["missing"]:
                         st.write(f"- {m}")
                 if not r["unintended"] and not r["missing"]:
-                    st.success("✅ All detected changes match the request list, and nothing requested is missing.")
+                    st.success("All detected changes match the request list, and nothing requested is missing.")
 
         with tab_map["Side by Side"]:
             st.image(cv2_to_display(result.side_by_side),
@@ -821,14 +824,14 @@ if mode.startswith("1"):
 
             col_json, col_excel = st.columns(2)
             with col_json:
-                st.download_button("📥 Download JSON Report",
+                st.download_button("Download JSON Report",
                                    data=json.dumps(report, indent=2),
                                    file_name="drawing_comparison_report.json",
                                    mime="application/json")
             with col_excel:
                 excel_data = export_to_excel(report)
                 if excel_data:
-                    st.download_button("📥 Download Excel Report",
+                    st.download_button("Download Excel Report",
                                        data=excel_data,
                                        file_name="drawing_comparison_report.xlsx",
                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -852,7 +855,7 @@ elif mode.startswith("2"):
                "(base fabric type, sewing method, panel positioning method, etc.)")
 
     with st.sidebar:
-        st.subheader("📁 Inputs")
+        st.subheader("Inputs")
         use_sample = st.checkbox("Use sample prototype drawing", value=True)
         drawing_page = 1
         if not use_sample:
@@ -872,7 +875,7 @@ elif mode.startswith("2"):
         else:
             drawing_file = None
 
-        st.subheader("📋 Required Instructions Checklist")
+        st.subheader("Required Instructions Checklist")
         from core.completeness_checker import load_checklist
         default_checklist = load_checklist()
         checklist_text = st.text_area(
@@ -882,7 +885,7 @@ elif mode.startswith("2"):
         )
 
         backend, api_key, vision_model = ai_backend_selector()
-        run_btn2 = st.button("🚀 Run Completeness Check", type="primary", use_container_width=True)
+        run_btn2 = st.button("Run Completeness Check", type="primary", use_container_width=True)
 
     if run_btn2:
         drawing_pdf_bytes = None
@@ -928,9 +931,9 @@ elif mode.startswith("2"):
                 r = result.to_dict()
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Checklist items", r["total_count"])
-                c2.metric("✅ Present", r["present_count"])
-                c3.metric("❌ Missing", r["missing_count"])
-                c4.metric("⚠️ Ambiguous", r["ambiguous_count"])
+                c2.metric("Present", r["present_count"])
+                c3.metric("Missing", r["missing_count"])
+                c4.metric("Ambiguous", r["ambiguous_count"])
 
                 st.image(cv2_to_display(drawing), caption="Drawing under review",
                          use_container_width=True)
@@ -938,23 +941,23 @@ elif mode.startswith("2"):
                 for item in r["items"]:
                     if item["status"] == "present":
                         loc = f" (found in: {item['location']})" if item.get("location") else ""
-                        st.success(f"**{item['item']}** — ✅ PRESENT{loc}\n\n> {item['evidence']}")
+                        st.success(f"**{item['item']}** — Present{loc}\n\n{item['evidence']}")
                     elif item["status"] == "missing":
-                        st.error(f"**{item['item']}** — ❌ MISSING\n\n{item['note']}")
+                        st.error(f"**{item['item']}** — Missing\n\n{item['note']}")
                     else:
-                        st.warning(f"**{item['item']}** — ⚠️ AMBIGUOUS\n\n{item['note']}")
+                        st.warning(f"**{item['item']}** — Ambiguous\n\n{item['note']}")
 
                 # Downloads
                 col_json, col_excel = st.columns(2)
                 with col_json:
-                    st.download_button("📥 Download JSON Report",
+                    st.download_button("Download JSON Report",
                                        data=json.dumps(r, indent=2),
                                        file_name="completeness_report.json",
                                        mime="application/json")
                 with col_excel:
                     excel_data = export_to_excel(r)
                     if excel_data:
-                        st.download_button("📥 Download Excel Report",
+                        st.download_button("Download Excel Report",
                                            data=excel_data,
                                            file_name="completeness_report.xlsx",
                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -970,7 +973,7 @@ else:
     st.caption("Find spelling mistakes and mismatches between the main drawing and its views/sections.")
 
     with st.sidebar:
-        st.subheader("📁 Inputs")
+        st.subheader("Inputs")
         use_sample = st.checkbox("Use sample drawing sheet", value=True)
         drawing_page = 1
         if not use_sample:
@@ -990,7 +993,7 @@ else:
         else:
             drawing_file = None
 
-        st.subheader("📖 Known Domain Terms")
+        st.subheader("Known Domain Terms")
         from core.consistency_checker import load_domain_terms
         default_terms = load_domain_terms()
         domain_terms_text = st.text_area(
@@ -1000,7 +1003,7 @@ else:
         )
 
         backend, api_key, vision_model = ai_backend_selector()
-        run_btn3 = st.button("🚀 Run Consistency Check", type="primary", use_container_width=True)
+        run_btn3 = st.button("Run Consistency Check", type="primary", use_container_width=True)
 
     if run_btn3:
         drawing_pdf_bytes = None
@@ -1043,35 +1046,35 @@ else:
             if result:
                 r = result.to_dict()
                 c1, c2 = st.columns(2)
-                c1.metric("📝 Typos found", r["typo_count"])
-                c2.metric("🔀 Cross-view mismatches", r["mismatch_count"])
+                c1.metric("Typos found", r["typo_count"])
+                c2.metric("Cross-view mismatches", r["mismatch_count"])
 
                 st.image(cv2_to_display(drawing), caption="Drawing under review",
                          use_container_width=True)
 
                 if r["typos"]:
-                    st.subheader("📝 Typos")
+                    st.subheader("Typos")
                     st.table(r["typos"])
                 else:
-                    st.success("✅ No typos found.")
+                    st.success("No typos found.")
 
                 if r["mismatches"]:
-                    st.subheader("🔀 Cross-View Mismatches")
+                    st.subheader("Cross-View Mismatches")
                     st.table(r["mismatches"])
                 else:
-                    st.success("✅ No cross-view mismatches found.")
+                    st.success("No cross-view mismatches found.")
 
                 # Downloads
                 col_json, col_excel = st.columns(2)
                 with col_json:
-                    st.download_button("📥 Download JSON Report",
+                    st.download_button("Download JSON Report",
                                        data=json.dumps(r, indent=2),
                                        file_name="consistency_report.json",
                                        mime="application/json")
                 with col_excel:
                     excel_data = export_to_excel(r)
                     if excel_data:
-                        st.download_button("📥 Download Excel Report",
+                        st.download_button("Download Excel Report",
                                            data=excel_data,
                                            file_name="consistency_report.xlsx",
                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
