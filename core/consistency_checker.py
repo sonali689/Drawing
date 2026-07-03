@@ -115,16 +115,18 @@ class ConsistencyResult:
 # ---------------------------------------------------------------------------
 
 def _local_typo_check(drawing_color: np.ndarray,
-                       domain_terms: List[str]) -> List[TypoFinding]:
+                      domain_terms: List[str],
+                      pdf_bytes: Optional[bytes] = None,
+                      page_number: int = 1) -> List[TypoFinding]:
     """
     Run local OCR + spellcheck to find typos without any LLM call.
     This is fast, free, and catches obvious spelling mistakes.
     """
     try:
-        from core.ocr_engine import extract_text
+        from core.pdf_handler import get_pdf_or_ocr_text
         from core.text_analyzer import find_typos, load_domain_terms as load_terms_set
 
-        ocr_result = extract_text(drawing_color)
+        ocr_result = get_pdf_or_ocr_text(drawing_color, pdf_bytes, page_number)
         if not ocr_result.text_blocks:
             return []
 
@@ -209,12 +211,13 @@ If there are no typos or no mismatches, return empty arrays. Do not invent issue
 # Public API
 # ---------------------------------------------------------------------------
 
-def check_consistency(drawing_color: np.ndarray,
-                       domain_terms: List[str] = None,
-                       backend: str = "anthropic",
-                       api_key: Optional[str] = None,
-                       vision_model: Optional[str] = None,
-                       include_local_typos: bool = True) -> ConsistencyResult:
+def check_consistency(drawing_color: np.ndarray, domain_terms: List[str] = None,
+                      backend: str = "anthropic",
+                      api_key: Optional[str] = None,
+                      vision_model: Optional[str] = None,
+                      include_local_typos: bool = True,
+                      pdf_bytes: Optional[bytes] = None,
+                      page_number: int = 1) -> ConsistencyResult:
     """
     Check a drawing for typos and cross-view mismatches.
 
@@ -229,6 +232,8 @@ def check_consistency(drawing_color: np.ndarray,
         api_key: Required for Anthropic backend.
         vision_model: Override the default model.
         include_local_typos: Whether to run local OCR-based typo check too.
+        pdf_bytes: Optional raw PDF bytes for vector text parsing.
+        page_number: The PDF page number.
     """
     if domain_terms is None:
         domain_terms = load_domain_terms()
@@ -237,10 +242,10 @@ def check_consistency(drawing_color: np.ndarray,
     local_typos = []
     ocr_text = ""
     if include_local_typos:
-        local_typos = _local_typo_check(drawing_color, domain_terms)
+        local_typos = _local_typo_check(drawing_color, domain_terms, pdf_bytes, page_number)
         try:
-            from core.ocr_engine import extract_text
-            ocr_result = extract_text(drawing_color)
+            from core.pdf_handler import get_pdf_or_ocr_text
+            ocr_result = get_pdf_or_ocr_text(drawing_color, pdf_bytes, page_number)
             ocr_text = ocr_result.full_text
         except Exception:
             pass

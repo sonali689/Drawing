@@ -59,6 +59,8 @@ class ComparisonResult:
     annotated_revision: np.ndarray = None    # revision image with boxes drawn
     aligned_revision: np.ndarray = None      # revision warped onto master's coordinate frame
     side_by_side: np.ndarray = None
+    blended_diff: np.ndarray = None           # Red/Green difference overlay
+    homography: np.ndarray = None            # 3x3 warp matrix H
     processing_time_s: float = 0.0
     ssim_score: float = 0.0                  # overall SSIM (1.0 = identical)
 
@@ -150,21 +152,21 @@ def align_images(master_gray: np.ndarray, revision_gray: np.ndarray,
             good.append(m)
 
     if len(good) < min_match_count:
-        return revision_color, False, len(good) / max(min_match_count, 1)
+        return revision_color, False, len(good) / max(min_match_count, 1), None
 
     src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
     dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
     H, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
     if H is None:
-        return revision_color, False, 0.0
+        return revision_color, False, 0.0, None
 
     inliers = int(mask.sum()) if mask is not None else 0
     confidence = inliers / len(good)
 
     h, w = master_gray.shape[:2]
     aligned = cv2.warpPerspective(revision_color, H, (w, h), borderValue=(255, 255, 255))
-    return aligned, True, confidence
+    return aligned, True, confidence, H
 
 
 def compute_ssim_map(master_gray: np.ndarray,
@@ -228,6 +230,37 @@ def compute_discrepancy_map(master_gray: np.ndarray, aligned_revision_gray: np.n
     combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)  # fill gaps
 
     return combined, ssim_score, ssim_map
+
+
+def create_blended_diff(master_gray: np.ndarray, aligned_revision_gray: np.ndarray) -> np.ndarray:
+    """
+    Creates a Red/Green visual diff blend of two aligned grayscale drawings.
+    Background is white (255, 255, 255).
+    Unchanged geometry is black (0, 0, 0).
+    Deleted elements (Before only) are Red (255, 0, 0) in RGB, (0, 0, 255) in BGR.
+    Added elements (After only) are Green (0, 255, 0) in RGB/BGR.
+    """
+    h, w = master_gray.shape[:2]
+    # Create white canvas in BGR
+    diff_bgr = np.full((h, w, 3), 255, dtype=np.uint8)
+    
+    # Binary masks: True where ink/drawing is present (pixel value is dark)
+    master_ink = master_gray < 200
+    revision_ink = aligned_revision_gray < 200
+    
+    # Unchanged ink: both are dark -> Black (0, 0, 0)
+    unchanged = master_ink & revision_ink
+    diff_bgr[unchanged] = [0, 0, 0]
+    
+    # Deleted ink: in master but not revision -> Red (BGR: 0, 0, 255)
+    deleted = master_ink & ~revision_ink
+    diff_bgr[deleted] = [0, 0, 255]
+    
+    # Added ink: not in master but in revision -> Green (BGR: 0, 255, 0)
+    added = ~master_ink & revision_ink
+    diff_bgr[added] = [0, 255, 0]
+    
+    return diff_bgr
 
 
 def extract_discrepancies(mask: np.ndarray, min_area: int = 40) -> List[Discrepancy]:
@@ -466,7 +499,7 @@ def compare_drawings(master_color: np.ndarray, revision_color: np.ndarray,
     master_gray = preprocess(master_color)
     revision_gray_raw = preprocess(revision_color)
 
-    aligned_revision_color, aligned_ok, confidence = align_images(
+    aligned_revision_color, aligned_ok, confidence, H = align_images(
         master_gray, revision_gray_raw, revision_color, use_sift=use_sift
     )
     aligned_revision_gray = preprocess(aligned_revision_color)
@@ -489,6 +522,9 @@ def compare_drawings(master_color: np.ndarray, revision_color: np.ndarray,
         except Exception:
             pass  # OCR classification is best-effort
 
+    # Create the Red/Green visual diff blend
+    blended_diff = create_blended_diff(master_gray, aligned_revision_gray)
+
     annotated = annotate(aligned_revision_color, discrepancies)
     side_by_side = make_side_by_side(master_color, annotated)
 
@@ -501,6 +537,8 @@ def compare_drawings(master_color: np.ndarray, revision_color: np.ndarray,
         annotated_revision=annotated,
         aligned_revision=aligned_revision_color,
         side_by_side=side_by_side,
+        blended_diff=blended_diff,
+        homography=H,
         processing_time_s=time.time() - t0,
         ssim_score=ssim_score,
     )

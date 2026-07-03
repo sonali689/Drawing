@@ -104,15 +104,15 @@ class CompletenessResult:
 # Pre-check with OCR (local, no AI needed)
 # ---------------------------------------------------------------------------
 
-def _ocr_precheck(drawing_color: np.ndarray, checklist: List[str]) -> dict:
+def _ocr_precheck(drawing_color: np.ndarray, checklist: List[str], pdf_bytes: Optional[bytes] = None, page_number: int = 1) -> dict:
     """
     Quick local check using OCR — looks for keyword matches before calling
     the LLM. This gives the LLM better context and catches obvious present/missing
     items without needing expensive AI calls.
     """
     try:
-        from core.ocr_engine import extract_text
-        ocr_result = extract_text(drawing_color)
+        from core.pdf_handler import get_pdf_or_ocr_text
+        ocr_result = get_pdf_or_ocr_text(drawing_color, pdf_bytes, page_number)
         full_text = ocr_result.full_text.lower()
 
         precheck = {}
@@ -197,9 +197,11 @@ Return exactly {len(checklist)} objects, one per checklist item, in the same ord
 # ---------------------------------------------------------------------------
 
 def check_completeness(drawing_color: np.ndarray, checklist: List[str] = None,
-                        backend: str = "anthropic",
-                        api_key: Optional[str] = None,
-                        vision_model: Optional[str] = None) -> CompletenessResult:
+                       backend: str = "anthropic",
+                       api_key: Optional[str] = None,
+                       vision_model: Optional[str] = None,
+                       pdf_bytes: Optional[bytes] = None,
+                       page_number: int = 1) -> CompletenessResult:
     """
     Check a prototype drawing against the instruction checklist.
 
@@ -209,6 +211,8 @@ def check_completeness(drawing_color: np.ndarray, checklist: List[str] = None,
         backend: "ollama" for local, "anthropic" for cloud.
         api_key: Required for Anthropic backend.
         vision_model: Override the default model.
+        pdf_bytes: Optional raw PDF bytes for vector text parsing.
+        page_number: The PDF page number.
     """
     if checklist is None:
         checklist = load_checklist()
@@ -222,8 +226,8 @@ def check_completeness(drawing_color: np.ndarray, checklist: List[str] = None,
     # Run OCR pre-check for context
     ocr_context = ""
     try:
-        from core.ocr_engine import extract_text
-        ocr_result = extract_text(drawing_color)
+        from core.pdf_handler import get_pdf_or_ocr_text
+        ocr_result = get_pdf_or_ocr_text(drawing_color, pdf_bytes, page_number)
         ocr_context = ocr_result.full_text
     except Exception:
         pass

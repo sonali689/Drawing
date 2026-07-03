@@ -180,6 +180,150 @@ def render_interactive_flagged_changes(discrepancies, master, aligned_revision):
             info_cols[2].markdown(f"**Area:** `{d.area_px} px²`")
 
 
+def render_curtain_slider(master_img: np.ndarray, revision_img: np.ndarray):
+    """
+    Renders an interactive swipe/curtain comparison slider inside a Streamlit component.
+    """
+    master_b64 = img_to_base64(master_img)
+    revision_b64 = img_to_base64(revision_img)
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+    * {{box-sizing: border-box;}}
+    body {{
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+    }}
+    .img-comp-container {{
+        position: relative;
+        width: 100%;
+        height: 100%;
+        max-width: 900px;
+        aspect-ratio: {master_img.shape[1]} / {master_img.shape[0]};
+        background-color: #1a1a2e;
+        border: 2px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }}
+    .img-comp-img {{
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+    }}
+    .img-comp-img img {{
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }}
+    .img-comp-overlay {{
+        width: 50%;
+        clip-path: inset(0 0 0 0);
+        z-index: 2;
+    }}
+    /* The slider line */
+    .img-comp-slider {{
+        position: absolute;
+        z-index: 9;
+        cursor: ew-resize;
+        width: 4px;
+        height: 100%;
+        background-color: #00d4ff;
+        left: 50%;
+        top: 0;
+        transform: translateX(-50%);
+        box-shadow: 0 0 10px rgba(0, 212, 255, 0.8);
+    }}
+    /* Slider button */
+    .img-comp-button {{
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background-color: #16213e;
+        border: 3px solid #00d4ff;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 10;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        color: #00d4ff;
+        font-weight: bold;
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+        user-select: none;
+    }}
+    /* Range input covering the whole area */
+    .img-comp-input {{
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        z-index: 11;
+        cursor: ew-resize;
+        margin: 0;
+        padding: 0;
+    }}
+    </style>
+    </head>
+    <body>
+
+    <div class="img-comp-container">
+      <!-- Underneath: Aligned Revision -->
+      <div class="img-comp-img">
+        <img src="data:image/jpeg;base64,{revision_b64}">
+      </div>
+      <!-- Overlay: Master -->
+      <div class="img-comp-img img-comp-overlay" id="overlay">
+        <img src="data:image/jpeg;base64,{master_b64}">
+      </div>
+      <!-- Controls -->
+      <div class="img-comp-slider" id="slider-line"></div>
+      <div class="img-comp-button" id="slider-btn">↔</div>
+      <input type="range" class="img-comp-input" id="range-input" min="0" max="100" value="50">
+    </div>
+
+    <script>
+    const input = document.getElementById('range-input');
+    const overlay = document.getElementById('overlay');
+    const line = document.getElementById('slider-line');
+    const btn = document.getElementById('slider-btn');
+
+    input.addEventListener('input', (e) => {
+        const val = e.target.value;
+        // Update clip path of the overlay
+        overlay.style.width = val + '%';
+        line.style.left = val + '%';
+        btn.style.left = val + '%';
+    });
+    </script>
+
+    </body>
+    </html>
+    """
+    import streamlit.components.v1 as components
+    # Calculate aspect ratio height for components.html
+    h, w = master_img.shape[:2]
+    # Restrict max display width to 900px, scale height accordingly
+    display_width = 900
+    display_height = int((h / w) * display_width) + 40 # add safety padding
+    
+    components.html(html_content, height=display_height)
+
+
 def export_to_excel(report_data: dict, filename: str = "report.xlsx") -> bytes:
     """Convert a report dict to Excel bytes for download."""
     try:
@@ -409,6 +553,8 @@ if mode.startswith("1"):
 
     if run_btn:
         # Load images
+        master_pdf_bytes = None
+        revision_pdf_bytes = None
         if use_sample:
             master = cv2.imread("samples/master_drawing.png")
             revision = cv2.imread("samples/revised_drawing.png")
@@ -418,18 +564,23 @@ if mode.startswith("1"):
                 st.stop()
 
             # Handle PDF files
+            master_pdf_bytes = None
+            revision_pdf_bytes = None
+            
             if master_file.name.lower().endswith(".pdf"):
                 from core.pdf_handler import pdf_to_images
-                raw = master_file.read()
-                pages = pdf_to_images(raw, pages=[master_page])
+                master_pdf_bytes = master_file.read()
+                master_file.seek(0)
+                pages = pdf_to_images(master_pdf_bytes, pages=[master_page])
                 master = pages[0].image
             else:
                 master = load_image(master_file)
 
             if revision_file.name.lower().endswith(".pdf"):
                 from core.pdf_handler import pdf_to_images
-                raw = revision_file.read()
-                pages = pdf_to_images(raw, pages=[revision_page])
+                revision_pdf_bytes = revision_file.read()
+                revision_file.seek(0)
+                pages = pdf_to_images(revision_pdf_bytes, pages=[revision_page])
                 revision = pages[0].image
             else:
                 revision = load_image(revision_file)
@@ -447,17 +598,39 @@ if mode.startswith("1"):
         text_diff_result = None
         if use_ocr_diff:
             try:
-                from core.ocr_engine import extract_text
+                from core.pdf_handler import get_pdf_or_ocr_text, warp_text_blocks, extract_vector_text
                 from core.structured_diff import compute_structured_diff
+                from core.ocr_engine import OCRResult
 
-                with st.spinner("Running OCR and computing text-level differences..."):
-                    master_ocr = extract_text(master)
-                    revision_ocr = extract_text(result.aligned_revision)
+                with st.spinner("Extracting text and computing text-level differences..."):
+                    # Get master text (vector if PDF, else OCR)
+                    master_ocr = get_pdf_or_ocr_text(master, master_pdf_bytes, page_number=master_page)
+                    
+                    # Get revision text
+                    if revision_pdf_bytes is not None:
+                        try:
+                            raw_revision_blocks = extract_vector_text(revision_pdf_bytes, page_number=revision_page)
+                            if raw_revision_blocks:
+                                # Warp the bounding boxes of the vector text blocks using homography H
+                                warped_blocks = warp_text_blocks(raw_revision_blocks, result.homography)
+                                revision_ocr = OCRResult(
+                                    text_blocks=warped_blocks,
+                                    full_text=" ".join(b.text for b in warped_blocks),
+                                    engine_used="pdf_vector_aligned",
+                                    image_shape=result.aligned_revision.shape[:2]
+                                )
+                            else:
+                                revision_ocr = get_pdf_or_ocr_text(result.aligned_revision)
+                        except Exception:
+                            revision_ocr = get_pdf_or_ocr_text(result.aligned_revision)
+                    else:
+                        revision_ocr = get_pdf_or_ocr_text(result.aligned_revision)
+
                     text_diff_result = compute_structured_diff(
                         master_ocr.text_blocks, revision_ocr.text_blocks
                     )
             except Exception as e:
-                st.warning(f"OCR text diff could not be computed: {e}")
+                st.warning(f"Text diff could not be computed: {e}")
 
         # AI reconciliation
         reconciliation = None
@@ -482,6 +655,36 @@ if mode.startswith("1"):
                     except Exception as e:
                         st.error(f"AI reconciliation failed: {e}")
 
+        # Title Block & BOM Analysis
+        with st.spinner("Analyzing drawing layout (Title Block & BOM)..."):
+            from core.layout_analyzer import parse_title_block_heuristics, parse_title_block_vlm, parse_bom_heuristics, parse_bom_vlm
+            from core.pdf_handler import get_pdf_or_ocr_text
+
+            if 'master_ocr' not in locals() or master_ocr is None:
+                try:
+                    master_ocr = get_pdf_or_ocr_text(master, master_pdf_bytes, page_number=master_page)
+                except Exception:
+                    from core.ocr_engine import extract_text
+                    master_ocr = extract_text(master)
+
+            tb_data = parse_title_block_heuristics(master_ocr.text_blocks, master.shape[:2])
+            bom_data = parse_bom_heuristics(master_ocr.text_blocks, master.shape[:2])
+
+            if ai_enabled:
+                try:
+                    vlm_tb = parse_title_block_vlm(master, backend=backend, api_key=api_key, vision_model=vision_model)
+                    if vlm_tb:
+                        tb_data.update({k: v for k, v in vlm_tb.items() if v is not None})
+                except Exception:
+                    pass
+
+                try:
+                    vlm_bom = parse_bom_vlm(master, backend=backend, api_key=api_key, vision_model=vision_model)
+                    if vlm_bom:
+                        bom_data = vlm_bom
+                except Exception:
+                    pass
+
         # --- Display Results ---
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Alignment", "✅ OK" if result.aligned_ok else "⚠️ FAILED")
@@ -495,9 +698,10 @@ if mode.startswith("1"):
                        "scan skew/offset rather than real design changes.")
 
         # Build tabs
-        tab_names = ["Side by Side", "Discrepancy Map", "Annotated Revision"]
+        tab_names = ["Side by Side", "Visual Diff (Red/Green)", "Interactive Swipe Slider", "Discrepancy Map", "Annotated Revision"]
         if text_diff_result:
             tab_names.append("Text Diff (OCR)")
+        tab_names.append("Title Block & BOM")
         if reconciliation:
             tab_names.insert(0, "Change Verification")
         tab_names.append("Report")
@@ -529,14 +733,53 @@ if mode.startswith("1"):
             st.image(cv2_to_display(result.side_by_side),
                      caption="Master (left) vs. Revision (right)",
                      use_container_width=True)
+
+        with tab_map["Visual Diff (Red/Green)"]:
+            if result.blended_diff is not None:
+                st.image(cv2_to_display(result.blended_diff),
+                         caption="Red/Green Blended Diff (Red = Deleted, Green = Added, Black = Unchanged)",
+                         use_container_width=True)
+            else:
+                st.warning("Visual Diff not available")
+
+        with tab_map["Interactive Swipe Slider"]:
+            st.markdown("**Swipe the blue handle back and forth to compare drawings:**")
+            render_curtain_slider(master, result.aligned_revision)
+
         with tab_map["Discrepancy Map"]:
             st.image(result.discrepancy_map,
                      caption="Binary discrepancy mask",
                      use_container_width=True)
+
         with tab_map["Annotated Revision"]:
             st.image(cv2_to_display(result.annotated_revision),
                      caption="Red=geometry, Orange=dimension, Yellow=text, Gray=unknown",
                      use_container_width=True)
+
+        with tab_map["Title Block & BOM"]:
+            st.subheader("📋 Title Block Metadata")
+            col_tb1, col_tb2 = st.columns(2)
+            with col_tb1:
+                st.markdown(f"**Part / Drawing Number:** `{tb_data.get('part_number') or 'Not Found'}`")
+                st.markdown(f"**Revision Level:** `{tb_data.get('revision') or 'Not Found'}`")
+                st.markdown(f"**Title / Description:** `{tb_data.get('title') or 'Not Found'}`")
+            with col_tb2:
+                st.markdown(f"**Sheet Scale:** `{tb_data.get('scale') or 'Not Found'}`")
+                st.markdown(f"**Measurement Units:** `{tb_data.get('units') or 'Not Found'}`")
+                st.markdown(f"**Designer/Approver:** `{tb_data.get('designer') or 'Not Found'}`")
+
+            st.subheader("📦 Bill of Materials (BOM)")
+            if bom_data:
+                import pandas as pd
+                if isinstance(bom_data[0], dict) and "description" in bom_data[0]:
+                    df_bom = pd.DataFrame(bom_data)
+                    cols = [c for c in ["item", "part_number", "description", "qty", "material", "remarks"] if c in df_bom.columns]
+                    st.dataframe(df_bom[cols] if cols else df_bom, use_container_width=True)
+                else:
+                    for item in bom_data:
+                        st.markdown(f"**Item {item.get('item', '?')}:** {item.get('raw_row', '')}")
+            else:
+                st.info("No Bill of Materials (BOM) table detected or it is empty.")
 
         if text_diff_result and "Text Diff (OCR)" in tab_map:
             with tab_map["Text Diff (OCR)"]:
@@ -611,10 +854,21 @@ elif mode.startswith("2"):
     with st.sidebar:
         st.subheader("📁 Inputs")
         use_sample = st.checkbox("Use sample prototype drawing", value=True)
+        drawing_page = 1
         if not use_sample:
             drawing_file = st.file_uploader("Prototype Drawing",
                                             type=["png", "jpg", "jpeg", "tiff", "tif", "pdf"],
                                             key="m2_drawing")
+            if drawing_file and drawing_file.name.lower().endswith(".pdf"):
+                try:
+                    from core.pdf_handler import get_page_count
+                    raw = drawing_file.read()
+                    drawing_file.seek(0)
+                    n_pages = get_page_count(raw)
+                    if n_pages > 1:
+                        drawing_page = st.number_input("Drawing page #", 1, n_pages, 1, key="m2_page")
+                except Exception:
+                    drawing_page = 1
         else:
             drawing_file = None
 
@@ -631,8 +885,10 @@ elif mode.startswith("2"):
         run_btn2 = st.button("🚀 Run Completeness Check", type="primary", use_container_width=True)
 
     if run_btn2:
+        drawing_pdf_bytes = None
         if use_sample:
             drawing = cv2.imread("samples/prototype_drawing_sample.png")
+            drawing_page = 1
         else:
             if not drawing_file:
                 st.error("Upload a drawing or check 'Use sample prototype drawing'.")
@@ -640,8 +896,9 @@ elif mode.startswith("2"):
 
             if drawing_file.name.lower().endswith(".pdf"):
                 from core.pdf_handler import pdf_to_images
-                raw = drawing_file.read()
-                pages = pdf_to_images(raw)
+                drawing_pdf_bytes = drawing_file.read()
+                drawing_file.seek(0)
+                pages = pdf_to_images(drawing_pdf_bytes, pages=[drawing_page])
                 drawing = pages[0].image
             else:
                 drawing = load_image(drawing_file)
@@ -660,6 +917,8 @@ elif mode.startswith("2"):
                         drawing, checklist,
                         backend=backend, api_key=api_key,
                         vision_model=vision_model,
+                        pdf_bytes=drawing_pdf_bytes,
+                        page_number=drawing_page,
                     )
                 except Exception as e:
                     st.error(f"Check failed: {e}")
@@ -713,10 +972,21 @@ else:
     with st.sidebar:
         st.subheader("📁 Inputs")
         use_sample = st.checkbox("Use sample drawing sheet", value=True)
+        drawing_page = 1
         if not use_sample:
             drawing_file = st.file_uploader("Drawing (with views/sections)",
                                             type=["png", "jpg", "jpeg", "tiff", "tif", "pdf"],
                                             key="m3_drawing")
+            if drawing_file and drawing_file.name.lower().endswith(".pdf"):
+                try:
+                    from core.pdf_handler import get_page_count
+                    raw = drawing_file.read()
+                    drawing_file.seek(0)
+                    n_pages = get_page_count(raw)
+                    if n_pages > 1:
+                        drawing_page = st.number_input("Drawing page #", 1, n_pages, 1, key="m3_page")
+                except Exception:
+                    drawing_page = 1
         else:
             drawing_file = None
 
@@ -733,8 +1003,10 @@ else:
         run_btn3 = st.button("🚀 Run Consistency Check", type="primary", use_container_width=True)
 
     if run_btn3:
+        drawing_pdf_bytes = None
         if use_sample:
             drawing = cv2.imread("samples/prototype_drawing_sample.png")
+            drawing_page = 1
         else:
             if not drawing_file:
                 st.error("Upload a drawing or check 'Use sample drawing sheet'.")
@@ -742,8 +1014,9 @@ else:
 
             if drawing_file.name.lower().endswith(".pdf"):
                 from core.pdf_handler import pdf_to_images
-                raw = drawing_file.read()
-                pages = pdf_to_images(raw)
+                drawing_pdf_bytes = drawing_file.read()
+                drawing_file.seek(0)
+                pages = pdf_to_images(drawing_pdf_bytes, pages=[drawing_page])
                 drawing = pages[0].image
             else:
                 drawing = load_image(drawing_file)
@@ -760,6 +1033,8 @@ else:
                         drawing, domain_terms,
                         backend=backend, api_key=api_key,
                         vision_model=vision_model,
+                        pdf_bytes=drawing_pdf_bytes,
+                        page_number=drawing_page,
                     )
                 except Exception as e:
                     st.error(f"Check failed: {e}")

@@ -118,3 +118,116 @@ def load_drawing_file(file_obj) -> Tuple[List[np.ndarray], str]:
         pil_img = Image.open(io.BytesIO(raw)).convert("RGB")
         bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         return [bgr], "image"
+
+
+def extract_vector_text(pdf_bytes: bytes, page_number: int, dpi: int = 300) -> List:
+    """
+    Extract text search blocks from vector PDF directly, scaling their bounding boxes
+    to match the high-resolution rendered image coordinates.
+    """
+    if fitz is None:
+        raise ImportError("PyMuPDF is required. Install with: pip install PyMuPDF")
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if page_number < 1 or page_number > len(doc):
+        doc.close()
+        return []
+
+    page = doc[page_number - 1]
+    
+    # Scale factor from PDF points (72 DPI) to output image DPI
+    scale = dpi / 72.0
+    
+    # Get text blocks
+    # Each block is a tuple: (x0, y0, x1, y1, "text", block_no, block_type)
+    blocks_raw = page.get_text("blocks")
+    
+    from core.ocr_engine import TextBlock
+    
+    text_blocks = []
+    for b in blocks_raw:
+        x0, y0, x1, y1, text, block_no, block_type = b
+        text = text.strip()
+        if not text:
+            continue
+            
+        # Scale bounding box to image coordinate space
+        x = int(x0 * scale)
+        y = int(y0 * scale)
+        w = int((x1 - x0) * scale)
+        h = int((y1 - y0) * scale)
+        
+        # We assign confidence=1.0 for vector text
+        text_blocks.append(TextBlock(
+            text=text,
+            bbox=(x, y, max(w, 1), max(h, 1)),
+            confidence=1.0,
+            source="pdf_vector"
+        ))
+        
+    doc.close()
+    return text_blocks
+
+
+def warp_text_blocks(text_blocks: List, H: np.ndarray) -> List:
+    """
+    Warp the bounding boxes of a list of TextBlock objects using homography H.
+    """
+    if H is None:
+        return text_blocks
+
+    import cv2
+    
+    warped_blocks = []
+    for b in text_blocks:
+        x, y, w, h = b.bbox
+        # Get the 4 corners
+        pts = np.array([
+            [x, y],
+            [x + w, y],
+            [x + w, y + h],
+            [x, y + h]
+        ], dtype=np.float32).reshape(-1, 1, 2)
+        
+        # Warp points
+        warped_pts = cv2.perspectiveTransform(pts, H)
+        warped_pts = warped_pts.reshape(-1, 2)
+        
+        # Compute new bounding box
+        xs = warped_pts[:, 0]
+        ys = warped_pts[:, 1]
+        x0, y0 = int(np.min(xs)), int(np.min(ys))
+        x1, y1 = int(np.max(xs)), int(np.max(ys))
+        
+        # Create a new TextBlock with warped bbox
+        from core.ocr_engine import TextBlock
+        warped_blocks.append(TextBlock(
+            text=b.text,
+            bbox=(x0, y0, max(x1 - x0, 1), max(y1 - y0, 1)),
+            confidence=b.confidence,
+            source=b.source,
+            angle=b.angle
+        ))
+    return warped_blocks
+
+
+def get_pdf_or_ocr_text(img: np.ndarray, pdf_bytes: Optional[bytes] = None, page_number: int = 1, dpi: int = 300) -> 'OCRResult':
+    from core.ocr_engine import extract_text, OCRResult
+    
+    if pdf_bytes is not None:
+        try:
+            vector_blocks = extract_vector_text(pdf_bytes, page_number, dpi)
+            if vector_blocks:
+                full_text = " ".join(b.text for b in vector_blocks)
+                return OCRResult(
+                    text_blocks=vector_blocks,
+                    full_text=full_text,
+                    engine_used="pdf_vector",
+                    image_shape=img.shape[:2]
+                )
+        except Exception:
+            pass # fall back to OCR
+            
+    return extract_text(img)
+
+
