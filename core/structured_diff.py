@@ -241,6 +241,9 @@ def compute_structured_diff(master_blocks, revision_blocks,
                 severity="warning",
             ))
 
+    # Check for components that moved using relative anchor offsets
+    _match_moved_components_by_anchor(changes)
+
     # Check for blocks that moved (same text, different position)
     _detect_moves(changes, max_match_distance)
 
@@ -325,3 +328,121 @@ def _detect_moves(changes: List[TextChange], threshold: float):
     # Remove the 'added' entries that were reclassified as moves
     for idx in sorted(to_remove_indices, reverse=True):
         changes.pop(idx)
+
+
+def _match_moved_components_by_anchor(changes: List[TextChange], max_anchor_distance: float = 400.0, match_tolerance: float = 60.0):
+    """
+    Find components that moved globally on the drawing sheet.
+    
+    1. Identify 'removed' and 'added' blocks that are anchor texts (non-numeric, length > 4).
+    2. Pair matching anchors (similarity >= 0.8) which are far apart.
+    3. For each anchor pair, calculate translation vector (dx, dy).
+    4. For all other 'removed' blocks within max_anchor_distance of the master anchor,
+       translate their position by (dx, dy).
+    5. Search for 'added' blocks in the revision close to the translated position (within match_tolerance).
+    6. Reclassify them as 'moved' or 'modified' (with a 'moved' flag in change_detail).
+    """
+    # 1. Gather unmatched (removed/added) items
+    removed_items = [c for c in changes if c.category == "removed"]
+    added_items = [c for c in changes if c.category == "added"]
+    
+    # Heuristic to check if a block is an anchor (text label)
+    def is_anchor(text: str) -> bool:
+        if not text:
+            return False
+        # Must contain letters, not just numbers or dimensions
+        if not any(char.isalpha() for char in text):
+            return False
+        # Exclude short strings or things that look like dimensions
+        if len(text.strip()) < 5:
+            return False
+        if _is_dimension(text):
+            return False
+        return True
+
+    # Find anchor candidates
+    master_anchors = [c for c in removed_items if is_anchor(c.master_text)]
+    revision_anchors = [c for c in added_items if is_anchor(c.revision_text)]
+    
+    paired_anchors = []
+    used_added_anchors = set()
+    
+    for m_anch in master_anchors:
+        best_r_anch = None
+        best_sim = 0.0
+        for r_anch in revision_anchors:
+            if id(r_anch) in used_added_anchors:
+                continue
+            sim = _text_similarity(_normalize_text(m_anch.master_text), _normalize_text(r_anch.revision_text))
+            if sim >= 0.8 and sim > best_sim:
+                best_sim = sim
+                best_r_anch = r_anch
+        
+        if best_r_anch is not None:
+            paired_anchors.append((m_anch, best_r_anch))
+            used_added_anchors.add(id(best_r_anch))
+            
+    # Process translation for each anchor pair
+    to_remove_added = set()
+    
+    for m_anch, r_anch in paired_anchors:
+        # Calculate displacement vector (dx, dy)
+        mx, my = _center(m_anch.master_bbox)
+        rx, ry = _center(r_anch.revision_bbox)
+        dx = rx - mx
+        dy = ry - my
+        
+        # Reclassify the anchor itself as moved or modified
+        m_anch.category = "moved"
+        m_anch.revision_text = r_anch.revision_text
+        m_anch.revision_bbox = r_anch.revision_bbox
+        m_anch.change_detail = f"Anchor moved: \"{m_anch.master_text}\""
+        m_anch.severity = "info"
+        to_remove_added.add(id(r_anch))
+        
+        # Find other removed blocks near the master anchor
+        for rc in removed_items:
+            if rc.category != "removed":  # might have been reclassified already
+                continue
+            dist_to_anchor = _distance(rc.master_bbox, m_anch.master_bbox)
+            if dist_to_anchor > max_anchor_distance:
+                continue
+                
+            # Expected position of this block in revision
+            mcx, mcy = _center(rc.master_bbox)
+            expected_rx = mcx + dx
+            expected_ry = mcy + dy
+            
+            # Find the closest added block in revision to the expected position
+            best_ac = None
+            best_ac_dist = float("inf")
+            for ac in added_items:
+                if id(ac) in to_remove_added:
+                    continue
+                acx, acy = _center(ac.revision_bbox)
+                dist = ((acx - expected_rx) ** 2 + (acy - expected_ry) ** 2) ** 0.5
+                if dist < best_ac_dist:
+                    best_ac_dist = dist
+                    best_ac = ac
+            
+            if best_ac is not None and best_ac_dist <= match_tolerance:
+                # Match found! Decide if it's a move (same text) or modification
+                m_norm = _normalize_text(rc.master_text)
+                r_norm = _normalize_text(best_ac.revision_text)
+                
+                rc.revision_text = best_ac.revision_text
+                rc.revision_bbox = best_ac.revision_bbox
+                to_remove_added.add(id(best_ac))
+                
+                if m_norm == r_norm:
+                    rc.category = "moved"
+                    rc.change_detail = f"Text moved: \"{rc.master_text}\""
+                    rc.severity = "info"
+                else:
+                    rc.category = "modified"
+                    rc.change_detail = f"Value/text changed: \"{rc.master_text}\" → \"{best_ac.revision_text}\" (moved)"
+                    rc.severity = _classify_severity(rc.master_text, best_ac.revision_text)
+                    
+    # Clean up the reclassified 'added' entries from changes list
+    changes[:] = [c for c in changes if id(c) not in to_remove_added]
+

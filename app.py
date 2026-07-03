@@ -301,13 +301,13 @@ def render_curtain_slider(master_img: np.ndarray, revision_img: np.ndarray):
     const line = document.getElementById('slider-line');
     const btn = document.getElementById('slider-btn');
 
-    input.addEventListener('input', (e) => {
+    input.addEventListener('input', (e) => {{
         const val = e.target.value;
         // Update clip path of the overlay
         overlay.style.width = val + '%';
         line.style.left = val + '%';
         btn.style.left = val + '%';
-    });
+    }});
     </script>
 
     </body>
@@ -536,21 +536,19 @@ if mode.startswith("1"):
         use_ocr_diff = st.checkbox("Enable OCR text diff", value=True,
                                     help="Extract text with OCR and show text-level changes")
 
-        st.subheader("Change Request Verification (AI)")
-        ai_enabled = st.checkbox("Reconcile diffs against requested changes", value=False)
+        st.subheader("Revision Purpose Verification (AI)")
+        ai_enabled = st.checkbox("Verify if drawing revision meets the stated purpose", value=False)
         if ai_enabled:
             backend, api_key, vision_model = ai_backend_selector()
-            requested_changes_text = st.text_area(
-                "Requested changes (one per line)",
-                value="Move the top-right bolt hole further right and down\n"
-                      "Remove the keyway slot above the center bore\n"
-                      "Add a new small hole to the left of center bore\n"
-                      "Update the R25.4 dimension callout",
-                height=140,
+            revision_purpose_text = st.text_area(
+                "Revision Purpose / ECO Notes",
+                value="ADD STITCHES ON HEAT PATCH",
+                help="Explain the purpose of this revision. The AI will verify if the changes meet this purpose.",
+                height=100,
             )
         else:
             backend, api_key, vision_model = "anthropic", None, None
-            requested_changes_text = ""
+            revision_purpose_text = ""
 
         run_btn = st.button("Run Comparison", type="primary", use_container_width=True)
 
@@ -635,28 +633,39 @@ if mode.startswith("1"):
             except Exception as e:
                 st.warning(f"Text diff could not be computed: {e}")
 
-        # AI reconciliation
-        reconciliation = None
-        requested_changes = [c.strip() for c in requested_changes_text.splitlines() if c.strip()]
+        # Revision Purpose Verification (AI)
+        purpose_verification = None
         if ai_enabled:
             if backend == "anthropic" and not api_key:
-                st.error("Enter your Anthropic API key in the sidebar to run change-request verification.")
-            elif not requested_changes:
-                st.error("Enter at least one requested change in the sidebar.")
-            elif not result.discrepancies:
-                st.info("No pixel-level discrepancies were found, so there's nothing to reconcile.")
+                st.error("Enter your Anthropic API key in the sidebar to run purpose-driven verification.")
+            elif not revision_purpose_text:
+                st.error("Enter the revision purpose in the sidebar.")
             else:
-                from core.change_verifier import reconcile_changes
-                with st.spinner(f"Reconciling {len(result.discrepancies)} region(s) against "
-                                 f"{len(requested_changes)} requested change(s)..."):
+                from core.change_verifier import verify_revision_purpose
+                # Compile text diff summary
+                text_changes_list = []
+                if text_diff_result:
+                    for c in text_diff_result.modified:
+                        text_changes_list.append(f"Modified: \"{c.master_text}\" -> \"{c.revision_text}\" (Details: {c.change_detail})")
+                    for c in text_diff_result.added:
+                        text_changes_list.append(f"Added: \"{c.revision_text}\"")
+                    for c in text_diff_result.removed:
+                        text_changes_list.append(f"Removed: \"{c.master_text}\"")
+                    for c in text_diff_result.moved:
+                        text_changes_list.append(f"Moved: \"{c.master_text}\"")
+                
+                text_changes_summary = "\n".join(text_changes_list) if text_changes_list else "No text changes detected."
+                
+                with st.spinner("Verifying drawings and changes against stated purpose..."):
                     try:
-                        reconciliation = reconcile_changes(
-                            master, result.aligned_revision, result.discrepancies,
-                            requested_changes, backend=backend,
-                            api_key=api_key, vision_model=vision_model,
+                        purpose_verification = verify_revision_purpose(
+                            master, result.aligned_revision,
+                            text_changes_summary, revision_purpose_text,
+                            backend=backend, api_key=api_key,
+                            vision_model=vision_model
                         )
                     except Exception as e:
-                        st.error(f"AI reconciliation failed: {e}")
+                        st.error(f"Purpose verification failed: {e}")
 
         # Title Block & BOM Analysis
         with st.spinner("Analyzing drawing layout (Title Block & BOM)..."):
@@ -705,32 +714,47 @@ if mode.startswith("1"):
         if text_diff_result:
             tab_names.append("Text Diff (OCR)")
         tab_names.append("Title Block & BOM")
-        if reconciliation:
-            tab_names.insert(0, "Change Verification")
+        if purpose_verification:
+            tab_names.insert(0, "Revision Purpose Verification")
         tab_names.append("Report")
 
         tabs = st.tabs(tab_names)
         tab_map = dict(zip(tab_names, tabs))
 
-        if reconciliation:
-            with tab_map["Change Verification"]:
-                r = reconciliation.to_dict()
-                cc1, cc2, cc3 = st.columns(3)
-                cc1.metric("Applied as requested", len(r["applied"]))
-                cc2.metric("Unintended changes", len(r["unintended"]))
-                cc3.metric("Requested but missing", len(r["missing"]))
-                if r["applied"]:
-                    st.success("**Applied as requested**")
-                    st.table(r["applied"])
-                if r["unintended"]:
-                    st.error("**Unintended changes** — flagged but not part of the request")
-                    st.table(r["unintended"])
-                if r["missing"]:
-                    st.warning("**Requested but not found** — CET may not have applied these")
-                    for m in r["missing"]:
-                        st.write(f"- {m}")
-                if not r["unintended"] and not r["missing"]:
-                    st.success("All detected changes match the request list, and nothing requested is missing.")
+        if purpose_verification:
+            with tab_map["Revision Purpose Verification"]:
+                st.subheader("🎯 Revision Purpose Verification Report")
+                st.markdown(f"**Stated Revision Purpose:** `{purpose_verification.purpose}`")
+                
+                is_met_val = purpose_verification.is_met.upper()
+                if "YES" in is_met_val:
+                    st.success("✅ **STATUS: REVISION PURPOSE FULLY MET**")
+                elif "NO" in is_met_val:
+                    st.error("❌ **STATUS: REVISION PURPOSE NOT MET**")
+                else:
+                    st.warning("⚠️ **STATUS: REVISION PURPOSE PARTIALLY MET**")
+                    
+                st.markdown(f"**Analysis findings:**\n{purpose_verification.explanation}")
+                
+                col_c1, col_c2, col_c3 = st.columns(3)
+                col_c1.metric("Applied changes", len(purpose_verification.applied_changes))
+                col_c2.metric("Unintended changes", len(purpose_verification.unintended_changes))
+                col_c3.metric("Missing changes", len(purpose_verification.missing_changes))
+                
+                if purpose_verification.applied_changes:
+                    st.success("**Applied changes:**")
+                    for c in purpose_verification.applied_changes:
+                        st.write(f"- {c}")
+                        
+                if purpose_verification.unintended_changes:
+                    st.error("**Unintended/Unrelated changes:**")
+                    for c in purpose_verification.unintended_changes:
+                        st.write(f"- {c}")
+                        
+                if purpose_verification.missing_changes:
+                    st.warning("**Missing changes (required but not found):**")
+                    for c in purpose_verification.missing_changes:
+                        st.write(f"- {c}")
 
         with tab_map["Side by Side"]:
             st.image(cv2_to_display(result.side_by_side),
@@ -817,8 +841,8 @@ if mode.startswith("1"):
 
         with tab_map["Report"]:
             report = result.to_report_dict()
-            if reconciliation:
-                report["change_reconciliation"] = reconciliation.to_dict()
+            if purpose_verification:
+                report["purpose_verification"] = purpose_verification.to_dict()
             if text_diff_result:
                 report["text_diff"] = text_diff_result.to_report()
 

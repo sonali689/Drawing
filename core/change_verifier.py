@@ -204,3 +204,91 @@ def reconcile_changes(master_color: np.ndarray, aligned_revision_color: np.ndarr
         region_verdicts=verdicts,
         missing=missing,
     )
+
+
+@dataclass
+class PurposeVerificationResult:
+    purpose: str
+    is_met: str                # "Yes" | "No" | "Partial"
+    explanation: str
+    applied_changes: List[str] = field(default_factory=list)
+    unintended_changes: List[str] = field(default_factory=list)
+    missing_changes: List[str] = field(default_factory=list)
+
+    def to_dict(self):
+        return self.__dict__
+
+
+def verify_revision_purpose(master_color: np.ndarray,
+                            aligned_revision_color: np.ndarray,
+                            text_changes_summary: str,
+                            purpose: str,
+                            backend: str = "anthropic",
+                            api_key: Optional[str] = None,
+                            vision_model: Optional[str] = None) -> PurposeVerificationResult:
+    """
+    Verify if the drawing revision matches the user's stated purpose, identifying
+    applied, unintended, or missing edits.
+    """
+    ai = AIBackend(
+        backend=backend,
+        api_key=api_key,
+        vision_model=vision_model,
+    )
+
+    prompt = f"""You are checking an engineering drawing revision for an Autoliv cushion assembly/flat pattern check.
+The stated purpose of this revision is: "{purpose}"
+
+We have programmatically detected the following text changes on the drawing:
+{text_changes_summary}
+
+Image 1 is the Master/Before drawing.
+Image 2 is the Aligned Revision/After drawing.
+
+Look at the drawings and the list of detected text changes, and perform a detailed verification check:
+1. Is the revision purpose met? Answer "Yes", "No", or "Partial".
+2. Provide a detailed explanation of your findings, referencing specific component drawings, titles, views, or annotations.
+3. List the changes (text or visual) that support this purpose and are correctly applied.
+4. List any unintended or unrelated changes that were made but do not seem to serve the stated purpose.
+5. List any missing items (labels, dimensions, notes) that were expected for this purpose but are not present.
+
+Respond ONLY with a valid JSON object in this format (no markdown code blocks, no other text):
+{{
+  "is_met": "Yes" or "No" or "Partial",
+  "explanation": "detailed explanation of findings",
+  "applied_changes": ["change 1", "change 2"],
+  "unintended_changes": ["unintended change 1", ...],
+  "missing_changes": ["missing change 1", ...]
+}}
+"""
+
+    try:
+        raw_response = ai.call_vision_json(
+            [master_color, aligned_revision_color],
+            prompt,
+            max_tokens=1500,
+        )
+        is_met = raw_response.get("is_met", "Partial")
+        explanation = raw_response.get("explanation", "No explanation provided.")
+        applied = raw_response.get("applied_changes", [])
+        unintended = raw_response.get("unintended_changes", [])
+        missing = raw_response.get("missing_changes", [])
+
+        return PurposeVerificationResult(
+            purpose=purpose,
+            is_met=is_met,
+            explanation=explanation,
+            applied_changes=applied,
+            unintended_changes=unintended,
+            missing_changes=missing
+        )
+    except Exception as e:
+        return PurposeVerificationResult(
+            purpose=purpose,
+            is_met="Partial",
+            explanation=f"Error running vision analysis: {e}",
+            applied_changes=[],
+            unintended_changes=[],
+            missing_changes=[]
+        )
+
