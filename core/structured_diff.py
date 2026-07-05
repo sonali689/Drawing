@@ -131,7 +131,7 @@ def _classify_severity(master_text: str, revision_text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def compute_structured_diff(master_blocks, revision_blocks,
-                             max_match_distance: float = 100.0,
+                             max_match_distance: float = 200.0,
                              text_similarity_threshold: float = 0.3) -> StructuredDiffResult:
     """
     Compare OCR text blocks from master and revision drawings.
@@ -247,6 +247,9 @@ def compute_structured_diff(master_blocks, revision_blocks,
     # Check for blocks that moved (same text, different position)
     _detect_moves(changes, max_match_distance)
 
+    # Content-first matching: catch relocated components that spatial matching missed
+    _match_by_content(changes, text_similarity_threshold)
+
     return StructuredDiffResult(
         changes=changes,
         total_master_blocks=len(master_blocks),
@@ -296,6 +299,30 @@ def _describe_change(master_text: str, revision_text: str) -> str:
         if changed_pairs:
             return f"Value changed: {', '.join(changed_pairs)}"
 
+    # Check for cushion drawing specific changes
+    m_lower = master_text.lower()
+    r_lower = revision_text.lower()
+    
+    # Material changes
+    material_terms = ['nylon', 'polyester', 'fabric', 'cloth', 'thread', 'yarn',
+                      'silicone', 'coating', 'pa66', 'pa6', 'pet', 'opa', 'material',
+                      'denier', 'dtex', 'tex']
+    if any(t in m_lower or t in r_lower for t in material_terms):
+        return f"Material change: \"{master_text}\" → \"{revision_text}\""
+    
+    # Sewing / stitch changes
+    sewing_terms = ['stitch', 'sew', 'seam', 'hem', 'tack', 'bartack', 'zigzag',
+                    'lockstitch', 'chainstitch', 'binding', 'fold', 'pattern',
+                    'needle', 'bobbin', 'spi']
+    if any(t in m_lower or t in r_lower for t in sewing_terms):
+        return f"Sewing change: \"{master_text}\" → \"{revision_text}\""
+    
+    # Revision / drawing metadata changes
+    meta_terms = ['rev', 'revision', 'date', 'drawn', 'checked', 'approved',
+                  'issue', 'ecn', 'eco', 'dcn', 'released']
+    if any(t in m_lower or t in r_lower for t in meta_terms):
+        return f"Revision metadata change: \"{master_text}\" → \"{revision_text}\""
+    
     return f"\"{master_text}\" → \"{revision_text}\""
 
 
@@ -445,4 +472,62 @@ def _match_moved_components_by_anchor(changes: List[TextChange], max_anchor_dist
                     
     # Clean up the reclassified 'added' entries from changes list
     changes[:] = [c for c in changes if id(c) not in to_remove_added]
+
+
+def _match_by_content(changes: List[TextChange], similarity_threshold: float = 0.3):
+    """
+    Content-first matching: pair remaining 'removed' and 'added' entries by
+    text content similarity, regardless of spatial position.
+
+    This catches cases where a component drawing (e.g., a section detail view)
+    is repositioned to a completely different area of the sheet between revisions.
+    Spatial matching fails for these, but the text content is the same or similar.
+    """
+    removed = [(i, c) for i, c in enumerate(changes) if c.category == "removed"]
+    added = [(i, c) for i, c in enumerate(changes) if c.category == "added"]
+
+    to_remove_indices = set()
+
+    for ri, rc in removed:
+        if ri in to_remove_indices:
+            continue
+        r_norm = _normalize_text(rc.master_text)
+        if not r_norm or len(r_norm) < 3:
+            continue
+
+        best_ai = None
+        best_sim = 0.0
+
+        for ai, ac in added:
+            if ai in to_remove_indices:
+                continue
+            a_norm = _normalize_text(ac.revision_text)
+            if not a_norm:
+                continue
+            sim = _text_similarity(r_norm, a_norm)
+            if sim > best_sim:
+                best_sim = sim
+                best_ai = (ai, ac)
+
+        if best_ai is not None and best_sim >= 0.6:
+            ai, ac = best_ai
+            if best_sim >= 0.95:
+                # Nearly identical text — it's a move
+                rc.category = "moved"
+                rc.revision_text = ac.revision_text
+                rc.revision_bbox = ac.revision_bbox
+                rc.change_detail = f"Component relocated: \"{rc.master_text}\""
+                rc.severity = "info"
+            else:
+                # Similar but changed text at a different location
+                rc.category = "modified"
+                rc.revision_text = ac.revision_text
+                rc.revision_bbox = ac.revision_bbox
+                rc.change_detail = _describe_change(rc.master_text, ac.revision_text) + " (relocated)"
+                rc.severity = _classify_severity(rc.master_text, ac.revision_text)
+            to_remove_indices.add(ai)
+
+    # Remove matched 'added' entries
+    for idx in sorted(to_remove_indices, reverse=True):
+        changes.pop(idx)
 

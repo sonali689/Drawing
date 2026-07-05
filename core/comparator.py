@@ -100,7 +100,7 @@ def preprocess(img: np.ndarray, use_clahe: bool = True) -> np.ndarray:
 def align_images(master_gray: np.ndarray, revision_gray: np.ndarray,
                   revision_color: np.ndarray,
                   min_match_count: int = 15,
-                  use_sift: bool = True) -> Tuple[np.ndarray, bool, float]:
+                  use_sift: bool = True) -> Tuple[np.ndarray, bool, float, np.ndarray]:
     """
     Aligns the revision image onto the master using feature matching +
     homography (RANSAC).
@@ -112,25 +112,25 @@ def align_images(master_gray: np.ndarray, revision_gray: np.ndarray,
     Falls back to ORB if SIFT is not available (OpenCV built without
     non-free modules).
 
-    Returns: (aligned_revision_color, success, match_confidence)
+    Returns: (aligned_revision_color, success, match_confidence, homography_matrix)
     """
     if use_sift:
         try:
-            detector = cv2.SIFT_create(nfeatures=5000)
+            detector = cv2.SIFT_create(nfeatures=10000)
             norm_type = cv2.NORM_L2
         except cv2.error:
             # SIFT not available — fall back to ORB
-            detector = cv2.ORB_create(nfeatures=5000)
+            detector = cv2.ORB_create(nfeatures=10000)
             norm_type = cv2.NORM_HAMMING
     else:
-        detector = cv2.ORB_create(nfeatures=5000)
+        detector = cv2.ORB_create(nfeatures=10000)
         norm_type = cv2.NORM_HAMMING
 
     kp1, des1 = detector.detectAndCompute(master_gray, None)
     kp2, des2 = detector.detectAndCompute(revision_gray, None)
 
     if des1 is None or des2 is None or len(kp1) < min_match_count or len(kp2) < min_match_count:
-        return revision_color, False, 0.0
+        return revision_color, False, 0.0, None
 
     # FLANN-based matching for SIFT (faster and more accurate than brute-force for large descriptor sets)
     if norm_type == cv2.NORM_L2:
@@ -148,7 +148,7 @@ def align_images(master_gray: np.ndarray, revision_gray: np.ndarray,
         if len(m_n) != 2:
             continue
         m, n = m_n
-        if m.distance < 0.7 * n.distance:
+        if m.distance < 0.75 * n.distance:
             good.append(m)
 
     if len(good) < min_match_count:

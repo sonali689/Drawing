@@ -482,17 +482,36 @@ with st.sidebar:
 # =============================================================================
 if mode.startswith("1"):
     st.header("CET Revision Comparison")
-    st.caption("Verify requested changes were applied, and flag anything that wasn't requested. "
+    st.caption("Upload two consecutive revisions, state the revision purpose, and verify "
+               "that all intended changes were accurately applied. "
                "Supports PDF, PNG, JPG, TIFF.")
 
     with st.sidebar:
-        st.subheader("Inputs")
+        st.subheader("Revision Purpose")
+        revision_purpose_text = st.text_area(
+            "What was changed in this revision?",
+            value="",
+            placeholder="e.g., Material change from PA66 to PA6, Add stitches on heat patch, Update revision table...",
+            help="Describe the purpose of this revision (ECO notes, change request). "
+                 "The tool will check if these changes appear in the detected differences.",
+            height=100,
+        )
+        revision_history_text = st.text_area(
+            "Revision History (optional)",
+            value="",
+            placeholder="Paste the revision table from the drawing for additional context...",
+            help="Optional: paste the revision history table from the drawing. "
+                 "This helps the tool understand the context of changes.",
+            height=80,
+        )
+
+        st.subheader("Drawings")
         use_sample = st.checkbox("Use sample drawings (no upload needed)", value=True)
         if not use_sample:
-            master_file = st.file_uploader("Master Drawing",
+            master_file = st.file_uploader("Previous Revision",
                                            type=["png", "jpg", "jpeg", "tiff", "tif", "pdf"],
                                            key="m1_master")
-            revision_file = st.file_uploader("New Revision",
+            revision_file = st.file_uploader("Current Revision",
                                              type=["png", "jpg", "jpeg", "tiff", "tif", "pdf"],
                                              key="m1_rev")
             if master_file and master_file.name.lower().endswith(".pdf"):
@@ -502,7 +521,7 @@ if mode.startswith("1"):
                     master_file.seek(0)
                     n_pages = get_page_count(raw)
                     if n_pages > 1:
-                        master_page = st.number_input("Master page #", 1, n_pages, 1)
+                        master_page = st.number_input("Previous revision page #", 1, n_pages, 1)
                     else:
                         master_page = 1
                 except Exception:
@@ -517,7 +536,7 @@ if mode.startswith("1"):
                     revision_file.seek(0)
                     n_pages = get_page_count(raw)
                     if n_pages > 1:
-                        revision_page = st.number_input("Revision page #", 1, n_pages, 1)
+                        revision_page = st.number_input("Current revision page #", 1, n_pages, 1)
                     else:
                         revision_page = 1
                 except Exception:
@@ -530,25 +549,23 @@ if mode.startswith("1"):
 
         st.subheader("Sensitivity")
         threshold = st.slider("Pixel difference threshold", 5, 100, 30)
-        min_area = st.slider("Minimum region size (px²)", 50, 2000, 250)
+        min_area = st.slider("Minimum region size (px²)", 10, 2000, 100,
+                             help="Lower values catch smaller text/dimension changes")
         use_sift = st.checkbox("Use SIFT alignment (more robust)", value=True)
         use_ssim = st.checkbox("Use SSIM comparison", value=True)
         use_ocr_diff = st.checkbox("Enable OCR text diff", value=True,
-                                    help="Extract text with OCR and show text-level changes")
+                                    help="Extract text with OCR and show text-level changes. "
+                                         "Essential for catching dimension and annotation changes.")
 
-        st.subheader("Revision Purpose Verification (AI)")
-        ai_enabled = st.checkbox("Verify if drawing revision meets the stated purpose", value=False)
+        st.subheader("AI-Enhanced Verification (optional)")
+        ai_enabled = st.checkbox("Enable AI vision analysis", value=False,
+                                 help="Uses AI (Ollama local or Anthropic cloud) to do deeper "
+                                      "semantic analysis of drawing changes. Not required for "
+                                      "basic purpose verification.")
         if ai_enabled:
             backend, api_key, vision_model = ai_backend_selector()
-            revision_purpose_text = st.text_area(
-                "Revision Purpose / ECO Notes",
-                value="ADD STITCHES ON HEAT PATCH",
-                help="Explain the purpose of this revision. The AI will verify if the changes meet this purpose.",
-                height=100,
-            )
         else:
             backend, api_key, vision_model = "anthropic", None, None
-            revision_purpose_text = ""
 
         run_btn = st.button("Run Comparison", type="primary", use_container_width=True)
 
@@ -633,13 +650,18 @@ if mode.startswith("1"):
             except Exception as e:
                 st.warning(f"Text diff could not be computed: {e}")
 
-        # Revision Purpose Verification (AI)
+        # --- Deterministic Purpose Verification (no AI needed) ---
+        purpose_check_result = None
+        if revision_purpose_text.strip() and text_diff_result:
+            purpose_check_result = _check_purpose_against_text_diff(
+                revision_purpose_text, text_diff_result, revision_history_text
+            )
+
+        # AI-enhanced Purpose Verification (optional)
         purpose_verification = None
-        if ai_enabled:
+        if ai_enabled and revision_purpose_text.strip():
             if backend == "anthropic" and not api_key:
-                st.error("Enter your Anthropic API key in the sidebar to run purpose-driven verification.")
-            elif not revision_purpose_text:
-                st.error("Enter the revision purpose in the sidebar.")
+                st.error("Enter your Anthropic API key in the sidebar to run AI-enhanced verification.")
             else:
                 from core.change_verifier import verify_revision_purpose
                 # Compile text diff summary
@@ -656,7 +678,7 @@ if mode.startswith("1"):
                 
                 text_changes_summary = "\n".join(text_changes_list) if text_changes_list else "No text changes detected."
                 
-                with st.spinner("Verifying drawings and changes against stated purpose..."):
+                with st.spinner("Verifying drawings and changes against stated purpose (AI)..."):
                     try:
                         purpose_verification = verify_revision_purpose(
                             master, result.aligned_revision,
@@ -665,7 +687,7 @@ if mode.startswith("1"):
                             vision_model=vision_model
                         )
                     except Exception as e:
-                        st.error(f"Purpose verification failed: {e}")
+                        st.error(f"AI purpose verification failed: {e}")
 
         # Title Block & BOM Analysis
         with st.spinner("Analyzing drawing layout (Title Block & BOM)..."):
@@ -709,62 +731,147 @@ if mode.startswith("1"):
             st.warning("Automatic alignment had low confidence — results may include false positives from "
                        "scan skew/offset rather than real design changes.")
 
-        # Build tabs
-        tab_names = ["Side by Side", "Visual Diff (Red/Green)", "Interactive Swipe Slider", "Discrepancy Map", "Annotated Revision"]
+        # Build tabs — purpose & text diff first (most important for revision checking)
+        tab_names = []
+        if purpose_check_result or purpose_verification:
+            tab_names.append("Purpose Verification")
         if text_diff_result:
             tab_names.append("Text Diff (OCR)")
-        tab_names.append("Title Block & BOM")
-        if purpose_verification:
-            tab_names.insert(0, "Revision Purpose Verification")
-        tab_names.append("Report")
+        tab_names.extend(["Side by Side", "Visual Diff (Red/Green)", "Interactive Swipe Slider",
+                         "Discrepancy Map", "Annotated Revision", "Title Block & BOM", "Report"])
 
         tabs = st.tabs(tab_names)
         tab_map = dict(zip(tab_names, tabs))
 
-        if purpose_verification:
-            with tab_map["Revision Purpose Verification"]:
-                st.subheader("🎯 Revision Purpose Verification Report")
-                st.markdown(f"**Stated Revision Purpose:** `{purpose_verification.purpose}`")
-                
-                is_met_val = purpose_verification.is_met.upper()
-                if "YES" in is_met_val:
-                    st.success("✅ **STATUS: REVISION PURPOSE FULLY MET**")
-                elif "NO" in is_met_val:
-                    st.error("❌ **STATUS: REVISION PURPOSE NOT MET**")
-                else:
-                    st.warning("⚠️ **STATUS: REVISION PURPOSE PARTIALLY MET**")
-                    
-                st.markdown(f"**Analysis findings:**\n{purpose_verification.explanation}")
-                
-                col_c1, col_c2, col_c3 = st.columns(3)
-                col_c1.metric("Applied changes", len(purpose_verification.applied_changes))
-                col_c2.metric("Unintended changes", len(purpose_verification.unintended_changes))
-                col_c3.metric("Missing changes", len(purpose_verification.missing_changes))
-                
-                if purpose_verification.applied_changes:
-                    st.success("**Applied changes:**")
-                    for c in purpose_verification.applied_changes:
-                        st.write(f"- {c}")
-                        
-                if purpose_verification.unintended_changes:
-                    st.error("**Unintended/Unrelated changes:**")
-                    for c in purpose_verification.unintended_changes:
-                        st.write(f"- {c}")
-                        
-                if purpose_verification.missing_changes:
-                    st.warning("**Missing changes (required but not found):**")
-                    for c in purpose_verification.missing_changes:
-                        st.write(f"- {c}")
+        # --- Purpose Verification Tab ---
+        if "Purpose Verification" in tab_map:
+            with tab_map["Purpose Verification"]:
+                st.subheader("🎯 Revision Purpose Verification")
+                st.markdown(f"**Stated Revision Purpose:** `{revision_purpose_text}`")
+                if revision_history_text.strip():
+                    with st.expander("Revision History Context"):
+                        st.text(revision_history_text)
 
+                # Deterministic check (always shown if purpose was given)
+                if purpose_check_result:
+                    st.markdown("### Automated Text-Based Check")
+                    if purpose_check_result["status"] == "LIKELY MET":
+                        st.success(f"✅ **{purpose_check_result['status']}** — "
+                                  f"{purpose_check_result['matched_count']}/{purpose_check_result['keyword_count']} "
+                                  f"purpose keywords found in detected text changes.")
+                    elif purpose_check_result["status"] == "PARTIALLY MET":
+                        st.warning(f"⚠️ **{purpose_check_result['status']}** — "
+                                  f"{purpose_check_result['matched_count']}/{purpose_check_result['keyword_count']} "
+                                  f"purpose keywords found in detected text changes.")
+                    else:
+                        st.error(f"❌ **{purpose_check_result['status']}** — "
+                                f"None of the purpose keywords were found in text changes.")
+
+                    if purpose_check_result["matched_keywords"]:
+                        st.markdown("**Keywords found in changes:**")
+                        for kw, matches in purpose_check_result["matched_keywords"].items():
+                            for m in matches[:3]:  # show up to 3 matches per keyword
+                                st.write(f"- `{kw}` → {m}")
+
+                    if purpose_check_result["unmatched_keywords"]:
+                        st.markdown("**Keywords NOT found in changes:**")
+                        for kw in purpose_check_result["unmatched_keywords"]:
+                            st.write(f"- `{kw}` — no matching text change detected")
+
+                    # Show all detected changes for manual review
+                    if text_diff_result:
+                        all_changes = text_diff_result.modified + text_diff_result.added + text_diff_result.removed
+                        if all_changes:
+                            with st.expander(f"All detected text changes ({len(all_changes)} total)", expanded=False):
+                                for c in all_changes:
+                                    if c.category == "modified":
+                                        st.write(f"- **Modified:** \"{c.master_text}\" → \"{c.revision_text}\" ({c.change_detail})")
+                                    elif c.category == "added":
+                                        st.write(f"- **Added:** \"{c.revision_text}\"")
+                                    elif c.category == "removed":
+                                        st.write(f"- **Removed:** \"{c.master_text}\"")
+
+                # AI-enhanced check (shown below if enabled)
+                if purpose_verification:
+                    st.markdown("---")
+                    st.markdown("### AI-Enhanced Verification")
+                    is_met_val = purpose_verification.is_met.upper()
+                    if "YES" in is_met_val:
+                        st.success("✅ **AI ASSESSMENT: REVISION PURPOSE FULLY MET**")
+                    elif "NO" in is_met_val:
+                        st.error("❌ **AI ASSESSMENT: REVISION PURPOSE NOT MET**")
+                    else:
+                        st.warning("⚠️ **AI ASSESSMENT: REVISION PURPOSE PARTIALLY MET**")
+                        
+                    st.markdown(f"**Analysis findings:**\n{purpose_verification.explanation}")
+                    
+                    col_c1, col_c2, col_c3 = st.columns(3)
+                    col_c1.metric("Applied changes", len(purpose_verification.applied_changes))
+                    col_c2.metric("Unintended changes", len(purpose_verification.unintended_changes))
+                    col_c3.metric("Missing changes", len(purpose_verification.missing_changes))
+                    
+                    if purpose_verification.applied_changes:
+                        st.success("**Applied changes:**")
+                        for c in purpose_verification.applied_changes:
+                            st.write(f"- {c}")
+                            
+                    if purpose_verification.unintended_changes:
+                        st.error("**Unintended/Unrelated changes:**")
+                        for c in purpose_verification.unintended_changes:
+                            st.write(f"- {c}")
+                            
+                    if purpose_verification.missing_changes:
+                        st.warning("**Missing changes (required but not found):**")
+                        for c in purpose_verification.missing_changes:
+                            st.write(f"- {c}")
+
+        # --- Text Diff Tab ---
+        if text_diff_result and "Text Diff (OCR)" in tab_map:
+            with tab_map["Text Diff (OCR)"]:
+                summary = text_diff_result.summary()
+                tc1, tc2, tc3, tc4 = st.columns(4)
+                tc1.metric("Added text", summary["added"])
+                tc2.metric("Removed text", summary["removed"])
+                tc3.metric("Modified text", summary["modified"])
+                tc4.metric("Moved text", summary["moved"])
+
+                if text_diff_result.modified:
+                    st.subheader("Modified Text")
+                    mod_data = [
+                        {"Previous": c.master_text, "Current": c.revision_text,
+                         "Change": c.change_detail, "Severity": c.severity}
+                        for c in text_diff_result.modified
+                    ]
+                    st.table(mod_data)
+
+                if text_diff_result.added:
+                    st.subheader("Added Text")
+                    st.table([{"Text": c.revision_text, "Detail": c.change_detail}
+                              for c in text_diff_result.added])
+
+                if text_diff_result.removed:
+                    st.subheader("Removed Text")
+                    st.table([{"Text": c.master_text, "Detail": c.change_detail}
+                              for c in text_diff_result.removed])
+
+                if text_diff_result.moved:
+                    st.subheader("Moved / Relocated Text")
+                    st.table([{"Text": c.master_text, "Detail": c.change_detail}
+                              for c in text_diff_result.moved])
+
+                if not text_diff_result.modified and not text_diff_result.added and not text_diff_result.removed:
+                    st.success("No text-level differences detected by OCR.")
+
+        # --- Visual Comparison Tabs ---
         with tab_map["Side by Side"]:
             st.image(cv2_to_display(result.side_by_side),
-                     caption="Master (left) vs. Revision (right)",
+                     caption="Previous Revision (left) vs. Current Revision (right)",
                      use_container_width=True)
 
         with tab_map["Visual Diff (Red/Green)"]:
             if result.blended_diff is not None:
                 st.image(cv2_to_display(result.blended_diff),
-                         caption="Red/Green Blended Diff (Red = Deleted, Green = Added, Black = Unchanged)",
+                         caption="Red/Green Blended Diff (Red = Removed, Green = Added, Black = Unchanged)",
                          use_container_width=True)
             else:
                 st.warning("Visual Diff not available")
@@ -783,6 +890,7 @@ if mode.startswith("1"):
                      caption="Red=geometry, Orange=dimension, Yellow=text, Gray=unknown",
                      use_container_width=True)
 
+        # --- Title Block & BOM Tab ---
         with tab_map["Title Block & BOM"]:
             st.subheader("📋 Title Block Metadata")
             col_tb1, col_tb2 = st.columns(2)
@@ -808,39 +916,11 @@ if mode.startswith("1"):
             else:
                 st.info("No Bill of Materials (BOM) table detected or it is empty.")
 
-        if text_diff_result and "Text Diff (OCR)" in tab_map:
-            with tab_map["Text Diff (OCR)"]:
-                summary = text_diff_result.summary()
-                tc1, tc2, tc3, tc4 = st.columns(4)
-                tc1.metric("Added text", summary["added"])
-                tc2.metric("Removed text", summary["removed"])
-                tc3.metric("Modified text", summary["modified"])
-                tc4.metric("Moved text", summary["moved"])
-
-                if text_diff_result.modified:
-                    st.subheader("Modified Text")
-                    mod_data = [
-                        {"Master": c.master_text, "Revision": c.revision_text,
-                         "Change": c.change_detail, "Severity": c.severity}
-                        for c in text_diff_result.modified
-                    ]
-                    st.table(mod_data)
-
-                if text_diff_result.added:
-                    st.subheader("Added Text")
-                    st.table([{"Text": c.revision_text, "Detail": c.change_detail}
-                              for c in text_diff_result.added])
-
-                if text_diff_result.removed:
-                    st.subheader("Removed Text")
-                    st.table([{"Text": c.master_text, "Detail": c.change_detail}
-                              for c in text_diff_result.removed])
-
-                if not text_diff_result.modified and not text_diff_result.added and not text_diff_result.removed:
-                    st.success("No text-level differences detected by OCR.")
-
+        # --- Report Tab ---
         with tab_map["Report"]:
             report = result.to_report_dict()
+            if purpose_check_result:
+                report["purpose_check"] = purpose_check_result
             if purpose_verification:
                 report["purpose_verification"] = purpose_verification.to_dict()
             if text_diff_result:
@@ -867,7 +947,7 @@ if mode.startswith("1"):
             result.discrepancies, master, result.aligned_revision
         )
     else:
-        st.info("Set your options in the sidebar and click **Run Comparison** to get started.")
+        st.info("Enter the revision purpose in the sidebar, upload your drawings, and click **Run Comparison** to get started.")
 
 
 # =============================================================================
