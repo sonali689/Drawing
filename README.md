@@ -140,23 +140,6 @@ Drawing/
 ```
 
 ---
-
-## Architecture — What Runs Where
-
-| Feature | Runs Locally? | Needs Cloud API? | Notes |
-|---|:---:|:---:|---|
-| PDF → Image conversion | ✅ | ❌ | PyMuPDF, no external calls |
-| Image alignment (SIFT/RANSAC) | ✅ | ❌ | OpenCV, purely local |
-| Pixel diff + SSIM | ✅ | ❌ | OpenCV + scikit-image |
-| OCR text extraction | ✅ | ❌ | Tesseract + EasyOCR |
-| Text-level diff | ✅ | ❌ | Pure Python string matching |
-| Typo detection (basic) | ✅ | ❌ | pyspellchecker + domain dict |
-| Dimension value comparison | ✅ | ❌ | Regex parsing + comparison |
-| Change-request reconciliation | ✅ (Ollama) | ✅ (Anthropic) | Needs a vision LLM |
-| Completeness assessment | ✅ (Ollama) | ✅ (Anthropic) | Needs a vision LLM |
-| Cross-view mismatch reasoning | ✅ (Ollama) | ✅ (Anthropic) | Needs a vision LLM |
-| Excel report export | ✅ | ❌ | openpyxl |
-
 **Bottom line:** The CV pipeline, OCR, text diff, and typo detection are 100% local
 with no external dependencies. Only the "reasoning about what the change means" step
 optionally uses an LLM (local via Ollama or cloud via Anthropic).
